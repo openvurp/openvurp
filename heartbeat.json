@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "interval": "30m",
+  "target": "auto",
+  "active_hours_start": 8,
+  "active_hours_end": 23,
+  "ack_max_chars": 24,
+  "checklist_file": "HEARTBEAT.md"
+}

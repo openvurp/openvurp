@@ -1,0 +1,1 @@
+{"id": "telegram_files", "name": "Telegram File Sender", "version": "1.0.0", "description": "Invia qualsiasi file su Telegram.", "hooks": [], "tools": [], "enabled": true}

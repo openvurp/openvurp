@@ -1,0 +1,80 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Local/private runtime state
+memory/runtime/
+memory/session_store/
+memory/subagents/
+memory/*.md
+memory/*.json
+memory/
+logs/
+.backups/
+.reset_baseline/
+.claude/
+.codex
+gh.zip
+arduino-cli.exe
+
+# Vendored binaries (users install their own)
+bin/
+gh.zip
+*.exe
+arduino-cli.exe
+
+# Build / packaging
+*.egg-info/
+build/
+dist/
+
+# Agent private workspace & runtime identity
+.agents/
+anima.json
+pacts.json
+
+# Old/separate projects not part of this repo
+oldvurp/
+agentmw/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+envi/
+env/
+.openvurp_backups/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+.integrity_baseline.json
+
+# Runtime junk / scratch (never publish)
+%SystemDrive%/
+.cache/
+.deno_bin/
+downloads/
+
+# Separate companion projects (own repos, not part of openvurp)
+news_pulse/
+vurp_heart/
+
+# Runtime junk / scratch (never publish)
+%SystemDrive%/
+.cache/
+.deno_bin/
+downloads/
+
+# Separate companion projects (own repos, not part of openvurp)
+news_pulse/
+vurp_heart/

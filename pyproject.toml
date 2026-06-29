@@ -1,0 +1,101 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openvurp"
+version = "4.0.0"
+description = "openvurp — a personal AI agent that is born, grows with you, and can prove it."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "openvurp"},
+]
+keywords = ["ai", "agent", "llm", "assistant", "automation", "mcp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+
+dependencies = [
+    "requests>=2.28",
+    "httpx>=0.24",
+    "beautifulsoup4>=4.12",
+    "rich>=13.0",
+    "prompt_toolkit>=3.0",
+]
+
+[project.optional-dependencies]
+# Backend LLM
+openai = ["openai>=1.0"]
+anthropic = ["anthropic>=0.25"]
+groq = ["groq>=0.4"]
+all-llm = ["openai>=1.0", "anthropic>=0.25", "groq>=0.4"]
+
+# Canali
+telegram = ["python-telegram-bot>=20.0"]
+discord = ["discord.py>=2.3"]
+slack = ["slack-bolt>=1.18", "slack-sdk>=3.21"]
+
+# Media
+audio = ["openai-whisper>=20230918"]
+vision = ["httpx>=0.24"]
+voice = ["edge-tts>=6.1", "sounddevice>=0.4"]
+pdf = ["PyMuPDF>=1.23"]
+browser = ["playwright>=1.40"]
+
+# Sicurezza
+security = ["cryptography>=41.0"]
+
+# Sviluppo
+dev = ["pytest>=8.0"]
+
+# Tutto
+all = [
+    "openai>=1.0",
+    "anthropic>=0.25",
+    "groq>=0.4",
+    "python-telegram-bot>=20.0",
+    "discord.py>=2.3",
+    "slack-bolt>=1.18",
+    "slack-sdk>=3.21",
+    "openai-whisper>=20230918",
+    "edge-tts>=6.1",
+    "sounddevice>=0.4",
+    "PyMuPDF>=1.23",
+    "playwright>=1.40",
+    "cryptography>=41.0",
+    "beautifulsoup4>=4.12",
+    "pytest>=8.0",
+]
+
+[project.scripts]
+openvurp = "main:app_main"
+openvurp-cli = "cli:main"
+openvurp-tui = "TUI:main"
+openvurp-gateway = "runtime_gateway:main"
+
+[project.urls]
+Homepage = "https://github.com/openvurp/openvurp"
+Repository = "https://github.com/openvurp/openvurp"
+Issues = "https://github.com/openvurp/openvurp/issues"
+
+[tool.setuptools]
+packages = ["core", "core.security", "tools", "channels", "skills", "plugins"]
+py-modules = ["main", "agent", "config", "dashboard", "ears", "cli",
+              "reset", "runtime_gateway", "TUI", "watcher", "voice"]
+
+[tool.setuptools.package-data]
+"*" = ["*.md", "*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

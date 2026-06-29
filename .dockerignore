@@ -1,0 +1,37 @@
+# Stato runtime e segreti: non vanno nell'immagine (memory/ è un volume).
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+memory/
+logs/
+.backups/
+.reset_baseline/
+.integrity_baseline.json
+.agents/
+anima.json
+pacts.json
+
+# Cache / build
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Roba locale non necessaria nell'immagine
+.claude/
+.codex
+.vscode/
+.idea/
+oldvurp/
+agentmw/
+bin/
+*.exe
+gh.zip
+arduino-cli.exe
+openvurp.jpg

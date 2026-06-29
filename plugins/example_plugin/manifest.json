@@ -1,0 +1,9 @@
+{
+    "id": "example",
+    "name": "Example Plugin",
+    "version": "0.1.0",
+    "description": "Plugin di esempio per openvurp. Dimostra hooks e tools.",
+    "hooks": ["on_session_start"],
+    "tools": [],
+    "enabled": false
+}

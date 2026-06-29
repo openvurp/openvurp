@@ -1,0 +1,1 @@
+# openvurp Core — moduli strutturati
