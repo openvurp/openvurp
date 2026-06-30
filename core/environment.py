@@ -76,6 +76,7 @@ class EnvironmentSnapshot:
     markers: list[str] = field(default_factory=list)
     commands: dict[str, str] = field(default_factory=dict)
     preferred: dict[str, str] = field(default_factory=dict)
+    online: bool = True  # connettività live; default True → l'incertezza non blocca
 
     def to_memory_dict(self) -> dict:
         return {
@@ -99,7 +100,22 @@ class EnvironmentSnapshot:
             "markers": self.markers,
             "commands": self.commands,
             "preferred": self.preferred,
+            "online": self.online,
         }
+
+
+def _check_online(timeout: float = 3.0) -> bool:
+    """Connettività reale via TCP/443 verso più host pubblici (no DNS obbligatorio,
+    no dipendenza da curl). True se ALMENO uno risponde."""
+    import socket
+    for host, port in (("1.1.1.1", 443), ("8.8.8.8", 443),
+                       ("github.com", 443), ("www.google.com", 443)):
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def render_environment_prompt(snapshot: EnvironmentSnapshot) -> str:
@@ -150,6 +166,7 @@ def render_environment_prompt(snapshot: EnvironmentSnapshot) -> str:
         f"- progetto: {project_note}\n"
         f"- marker workspace: {marker_note}\n"
         f"- stato repo: {repo_note}\n"
+        f"- internet: {'disponibile' if snapshot.online else 'non raggiungibile ora'}\n"
         f"- comandi trovati: {available_note}\n"
         "### Preferenze Operative\n"
         f"{preferences}\n"
@@ -185,6 +202,7 @@ class EnvironmentInspector:
             return self._cached_snapshot
 
         snapshot = self._detect()
+        snapshot.online = _check_online()  # live, ma cachato col TTL dello snapshot
         self._cached_snapshot = snapshot
         self._cached_at = now
         return snapshot

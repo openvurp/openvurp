@@ -787,6 +787,26 @@ def _run_cmd(cmd: str, timeout: int = 10) -> str:
         return ""
 
 
+def _has_internet(timeout: float = 3.0) -> bool:
+    """Connettività reale: prova un TCP/443 verso più host pubblici affidabili.
+    True se ALMENO uno risponde. Robusto: niente dipendenza da `curl` o da un
+    singolo host (il vecchio check su httpbin.org dava falsi 'NO internet')."""
+    import socket
+    targets = [
+        ("1.1.1.1", 443),       # Cloudflare (IP: no DNS necessario)
+        ("8.8.8.8", 443),       # Google DNS over TLS (IP)
+        ("github.com", 443),    # fallback con risoluzione DNS
+        ("www.google.com", 443),
+    ]
+    for host, port in targets:
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def _run_system_discovery(ui) -> dict:
     """Esplora il sistema e ritorna un dict strutturato con i risultati reali."""
     import shutil
@@ -860,8 +880,7 @@ def _run_system_discovery(ui) -> dict:
 
     # Network
     ui.console.print(f"  [dim]  Controllo rete...[/dim]")
-    internet_test = _run_cmd("curl -s --max-time 5 http://httpbin.org/ip")
-    report["network"]["internet"] = bool(internet_test and "origin" in internet_test)
+    report["network"]["internet"] = _has_internet()
 
     # Software
     ui.console.print(f"  [dim]  Controllo software...[/dim]")
