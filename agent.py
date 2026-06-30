@@ -192,7 +192,7 @@ class UI:
         info = Text()
         info.append("\n\n")  # centra il marchio rispetto al polpo
         info.append("open", style="bold white")
-        info.append("openvurp", style=f"bold {BRAND}")
+        info.append("vurp", style=f"bold {BRAND}")
         info.append("   the octopus agent\n\n", style="dim")
         info.append(f"{model} · {backend}\n", style="dim")
         info.append(f"{OPENVURP_DIR}", style="dim")
