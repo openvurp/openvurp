@@ -82,6 +82,10 @@ LLM_BACKEND = _env("LLM_BACKEND", "ollama")
 LLM_MODEL = _env("LLM_MODEL", "qwen3-coder-next:cloud")
 LLM_BASE_URL = _env("LLM_BASE_URL", "http://localhost:11434")
 LLM_API_KEY = _env("LLM_API_KEY", "")
+# Ragionamento dei modelli "thinking" (Ollama): false (default) = risposta
+# diretta, niente monologo di ragionamento in chat; true = forza il thinking;
+# auto = lascia decidere al modello (può far trapelare il ragionamento).
+LLM_THINK = _env("LLM_THINK", "false")
 
 GROQ_API_KEY = _env("GROQ_API_KEY", "")
 OPENAI_API_KEY = _env("OPENAI_API_KEY", "")

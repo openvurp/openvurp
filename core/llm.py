@@ -365,6 +365,8 @@ class LLMClient:
                 "num_predict": self.max_tokens,
             },
         }
+        if self.think is not None:
+            payload["think"] = self.think
         if tools_schema:
             payload["tools"] = tools_schema
 
@@ -775,6 +777,8 @@ class LLMClient:
                 "num_predict": self.max_tokens,
             },
         }
+        if self.think is not None:
+            payload["think"] = self.think
 
         base = self.base_url or "http://localhost:11434"
         timeout = getattr(self, "_ollama_timeout", 120)
@@ -1067,6 +1071,12 @@ def create_llm_client(backend: str = "", model: str = "") -> LLMClient:
         "tool_temperature": getattr(cfg, 'TOOL_TEMPERATURE', 0.2),
         "max_tokens": getattr(cfg, 'MAX_TOKENS', 8192),
     }
+    # think: false (default) = il modello risponde diretto, niente monologo di
+    # ragionamento in chat; true = forza il thinking; auto = lascia decidere al
+    # modello (vecchio comportamento, può far trapelare il ragionamento).
+    _t = (getattr(cfg, "LLM_THINK", "false") or "false").strip().lower()
+    kwargs["think"] = {"true": True, "1": True, "yes": True, "on": True,
+                       "false": False, "0": False, "no": False, "off": False}.get(_t, None)
     kwargs.update(_resolve_backend_kwargs(cfg, resolved_backend))
 
     return LLMClient(
