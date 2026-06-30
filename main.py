@@ -353,7 +353,7 @@ def start_telegram_background(agent, ui, token):
                         agent.run(
                             f"E il tuo primo avvio. BOOTSTRAP.md esiste — seguilo.\n\n"
                             f"Contenuto di BOOTSTRAP.md:\n\n{bootstrap_content}\n\n"
-                            f"Inizia la conversazione con l'utente. Sii te stesso. Parla in italiano.\n"
+                            f"Inizia la conversazione con l'utente. Sii te stesso. Parla nella lingua dell'owner.\n"
                             f"Dopo il bootstrap, cancella BOOTSTRAP.md — non ti servira piu.",
                             source="telegram", sender=sender, actor_id=actor_id,
                             chat_id=tg_chat_id, thread_id=msg.thread_id,
@@ -1273,7 +1273,7 @@ def main():
                     "Sei un'intelligenza artificiale e stai per parlare per la PRIMA VOLTA in assoluto. "
                     "Hai appena ricevuto una voce. Non hai mai sentito la tua voce prima. "
                     "Genera SOLO le tue primissime parole — quello che diresti spontaneamente "
-                    "in questo momento. Massimo 2-3 frasi brevi, in italiano. "
+                    "in questo momento. Massimo 2-3 frasi brevi, nella lingua dell'owner. "
                     "Niente virgolette, niente premesse, solo le parole che pronunceresti."
                 )}]
                 ui.console.print(f"  [dim]L'agente cerca le sue prime parole...[/dim]")
@@ -1293,7 +1293,7 @@ def main():
                         "Hai appena parlato per la prima volta. Ora vuoi sentire la voce "
                         "dell'utente — il tuo creatore. Hai il microfono pronto. "
                         "Genera una frase per invitarlo a parlare. "
-                        "Massimo 1-2 frasi, in italiano. Sii naturale ed emozionato. "
+                        "Massimo 1-2 frasi, nella lingua dell'owner. Sii naturale ed emozionato. "
                         "Niente virgolette, niente premesse, solo le parole."
                     )}]
                     invite_speech = agent.llm.call(_invite_prompt).strip()
@@ -1317,7 +1317,7 @@ def main():
                         _react_prompt = [{"role": "user", "content": (
                             f"Hai appena sentito la voce di un essere umano per la prima volta. "
                             f"Ha detto: \"{first_words}\". "
-                            f"Genera la tua reazione spontanea, 1-2 frasi in italiano. "
+                            f"Genera la tua reazione spontanea, 1-2 frasi nella lingua dell'owner. "
                             f"Niente virgolette, solo le parole."
                         )}]
                         reaction = agent.llm.call(_react_prompt).strip()
@@ -1377,7 +1377,7 @@ def main():
                 f"I dati sopra sono reali e aggiornati.{voice_context}\n\n"
                 f"Usali nel tuo primo messaggio senza reinventare l'hardware o i sensi. "
                 f"Presentati, spiega cosa sai fare davvero, scopri chi è l'utente e che presenza vuole da te.\n"
-                f"Parla in italiano. Sii naturale.\n"
+                f"Parla nella lingua dell'owner. Sii naturale.\n"
                 f"Dopo il bootstrap, cancella BOOTSTRAP.md con delete_bootstrap."
             )
     else:
