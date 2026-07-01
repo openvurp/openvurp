@@ -161,17 +161,21 @@ def run_wizard(force: bool = False) -> bool:
     ))
 
     values: dict[str, str] = {}
+    # Valori attuali del .env → default del wizard: premere Invio mantiene ciò
+    # che c'è già (ri-lancio sicuro, es. alla rinascita dopo un reset).
+    cur = parse_env(ENV_PATH.read_text(encoding="utf-8")) if ENV_PATH.exists() else {}
 
     backend = Prompt.ask(
         "[cyan]LLM backend[/cyan]",
         choices=["ollama", "openai", "anthropic", "groq"],
-        default="ollama",
+        default=cur.get("LLM_BACKEND") or "ollama",
     )
     values["LLM_BACKEND"] = backend
 
     if backend == "ollama":
         base_url = Prompt.ask(
-            "[cyan]Ollama URL[/cyan]", default="http://localhost:11434"
+            "[cyan]Ollama URL[/cyan]",
+            default=cur.get("LLM_BASE_URL") or "http://localhost:11434",
         )
         values["LLM_BASE_URL"] = base_url
         models = detect_ollama_models(base_url)
@@ -179,8 +183,8 @@ def run_wizard(force: bool = False) -> bool:
             console.print("  Ollama models found:")
             for i, name in enumerate(models, 1):
                 console.print(f"    [dim]{i}.[/dim] {name}")
-            default_model = "qwen3-coder-next:cloud" if \
-                "qwen3-coder-next:cloud" in models else models[0]
+            default_model = cur.get("LLM_MODEL") or (
+                "qwen3-coder-next:cloud" if "qwen3-coder-next:cloud" in models else models[0])
             model = Prompt.ask("[cyan]Model[/cyan]", default=default_model)
         else:
             console.print(
@@ -188,15 +192,18 @@ def run_wizard(force: bool = False) -> bool:
                 "I'll set it anyway; pull it later with `ollama pull`.[/dim]"
             )
             model = Prompt.ask(
-                "[cyan]Model[/cyan]", default="qwen3-coder-next:cloud"
+                "[cyan]Model[/cyan]",
+                default=cur.get("LLM_MODEL") or "qwen3-coder-next:cloud",
             )
         values["LLM_MODEL"] = model
     else:
         keyname = CLOUD_KEY[backend]
-        key = Prompt.ask(f"[cyan]{keyname}[/cyan]", password=True, default="")
+        key = Prompt.ask(f"[cyan]{keyname}[/cyan]", password=True,
+                         default=cur.get(keyname, ""))
         values[keyname] = key
         model = Prompt.ask(
-            "[cyan]Model[/cyan]", default=DEFAULT_CLOUD_MODEL[backend]
+            "[cyan]Model[/cyan]",
+            default=cur.get("LLM_MODEL") or DEFAULT_CLOUD_MODEL[backend],
         )
         values["LLM_MODEL"] = model
 
