@@ -1079,11 +1079,10 @@ def main():
     if not args.headless and (os.isatty(0) and os.isatty(1)):
         try:
             from core.setup_wizard import run_wizard
-            # Parte su `openvurp` (non serve --setup): alla prima volta, e alla
-            # rinascita (agente non ancora "nato" → BOOTSTRAP.md presente). I
-            # default sono i valori attuali del .env, quindi Invio non perde nulla.
-            _force = getattr(args, "setup", False) or should_run_bootstrap(OPENVURP_DIR)
-            run_wizard(force=_force)
+            # Parte su `openvurp` (senza --setup) SOLO se manca la config (prima
+            # volta). Se hai già configurato, non compare nulla. `--setup` lo
+            # forza a mano quando vuoi riconfigurare.
+            run_wizard(force=getattr(args, "setup", False))
         except KeyboardInterrupt:
             return
         except Exception as exc:
