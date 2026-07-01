@@ -215,6 +215,12 @@ def run_wizard(force: bool = False) -> bool:
             if owner.strip():
                 values["TELEGRAM_ALLOWED_USERS"] = owner.strip()
 
+    console.print("\n[bold]What do you want active?[/bold] [dim](change anytime with `openvurp --setup`)[/dim]")
+    if Confirm.ask("[cyan]Web dashboard (chat from your browser)?[/cyan]", default=False):
+        values["DASHBOARD_ENABLED"] = "true"
+    if Confirm.ask("[cyan]Voice replies (text-to-speech)?[/cyan]", default=False):
+        values["VOICE_ENABLED"] = "true"
+
     path = write_env(values)
     console.print(Panel.fit(
         f"[green]✓ Configuration saved[/green] to [dim]{path}[/dim]\n"
@@ -247,6 +253,10 @@ def _run_wizard_plain(force: bool) -> bool:
         owner = input("Telegram owner ID (Enter for auto-detect): ").strip()
         if owner:
             values["TELEGRAM_ALLOWED_USERS"] = owner
+    if input("Web dashboard? [y/N]: ").strip().lower() in ("y", "yes", "s", "si"):
+        values["DASHBOARD_ENABLED"] = "true"
+    if input("Voice replies (TTS)? [y/N]: ").strip().lower() in ("y", "yes", "s", "si"):
+        values["VOICE_ENABLED"] = "true"
     path = write_env(values)
     print(f"✓ Saved to {path}")
     return True
