@@ -334,6 +334,15 @@ def _extract_bullets(raw: str, max_lines: int = 5) -> list[str]:
             continue
         if text.lower() in {"todo", "note", "appunti"}:
             continue
+        # MEMORY.md è memoria CURATA: i log macchina non sono ricordi.
+        # Scarta le righe generate dal runtime (heartbeat/system) e i dump
+        # lunghi — un fatto durevole sta in una frase, non in 900 caratteri.
+        if "[heartbeat/" in text or "[system/" in text:
+            continue
+        if "Questo è un heartbeat periodico" in text:
+            continue
+        if len(text) > 400:
+            continue
         bullets.append(text.lstrip("-* ").strip())
         if len(bullets) >= max_lines:
             break

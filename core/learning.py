@@ -102,9 +102,13 @@ class LearningLoop:
             ("correction", ("hai sbagliato", "sbagliato", "non fare", "non devi")),
             ("preference", ("la prossima volta", "preferisco che", "vorrei che")),
         )
+        import re as _re
         for signal, options in markers:
             for marker in options:
-                if marker in lower:
+                # Parola intera: "ricordando perché contava" NON è un
+                # "ricorda questo" — il substring match qui inquinava la
+                # memoria con testo che parlava soltanto di ricordare.
+                if _re.search(rf"\b{_re.escape(marker)}\b", lower):
                     return {
                         "signal": signal,
                         "marker": marker,

@@ -2905,6 +2905,11 @@ class Agent:
 
     def _record_learning_signal(self, user_input: str, source: str,
                                 actor_id: str) -> None:
+        # I prompt di sistema (heartbeat) non sono la voce dell'owner: se
+        # entrassero qui, il testo del prompt finirebbe classificato come
+        # "ricordo esplicito" e di notte consolidato in MEMORY.md come fatto.
+        if (source or "") == "heartbeat":
+            return
         if not self._learning_enabled(source, actor_id):
             return
         try:

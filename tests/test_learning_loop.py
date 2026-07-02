@@ -64,7 +64,24 @@ def test_repeated_tool_failures_create_promotable_candidate():
         assert os.listdir(os.path.join(tmp, "memory", "lessons"))
 
 
+def test_signal_markers_match_whole_words_only():
+    """'ricordando perché contava' NON è un 'ricorda questo': il substring
+    match faceva classificare il prompt del heartbeat come memoria esplicita
+    dell'owner, che di notte finiva consolidata in MEMORY.md come fatto."""
+    with tempfile.TemporaryDirectory() as tmp:
+        loop = LearningLoop(os.path.join(tmp, "memory"))
+
+        assert loop.detect_user_signal(
+            "scrivi all'owner ricordando perché contava") is None
+        assert loop.detect_user_signal(
+            "un testo che parla di sbagliato calcolo")  # parola intera: scatta
+
+        hit = loop.detect_user_signal("ricorda questo: il deploy è venerdì")
+        assert hit and hit["signal"] == "explicit_memory"
+
+
 if __name__ == "__main__":
     test_user_signal_is_recorded_and_redacted()
     test_repeated_tool_failures_create_promotable_candidate()
+    test_signal_markers_match_whole_words_only()
     print("Tutti i test learning loop passati!")
