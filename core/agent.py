@@ -2098,7 +2098,23 @@ class Agent:
                             self.ui.stop_spinner()
                     else:
                         self.observer.log_error(str(e), "llm_call")
-                        self.ui.error(f"Connessione LLM fallita: {e}")
+                        from core.llm import LLMError
+                        if isinstance(e, LLMError) and e.retryable:
+                            # Backend giù (es. Ollama spento): pungola la
+                            # sentinella così rileva subito la caduta, avvisa
+                            # l'owner e segnala quando torna.
+                            self.ui.error(
+                                f"Il backend LLM non risponde: {e} "
+                                f"— la sentinella lo tiene d'occhio e avvisa quando torna."
+                            )
+                            sentinel = getattr(self, "sentinel", None)
+                            if sentinel is not None:
+                                try:
+                                    sentinel.check_now()
+                                except Exception:
+                                    pass
+                        else:
+                            self.ui.error(f"Connessione LLM fallita: {e}")
                         self.agent_state.fail(f"LLM call failed: {e}", phase=AgentPhase.BLOCKED)
                         state_finished = True
                         return

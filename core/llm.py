@@ -354,6 +354,25 @@ class LLMClient:
             raw=usage,
         )
 
+    def _ollama_post(self, url: str, payload: dict, timeout, stream: bool = False,
+                     retries: int = 2, backoff: float = 1.5):
+        """POST verso Ollama con piccoli retry sugli errori di connessione:
+        se il server sta riavviando non si butta via il turno per un hiccup.
+        I Timeout NON si ritentano (il modello può essere solo lento)."""
+        import time as _time
+        last_exc = None
+        for attempt in range(retries + 1):
+            try:
+                r = self._requests.post(url, json=payload, timeout=timeout,
+                                        stream=stream)
+                r.raise_for_status()
+                return r
+            except self._requests.exceptions.ConnectionError as e:
+                last_exc = e
+                if attempt < retries:
+                    _time.sleep(backoff * (attempt + 1))
+        raise last_exc
+
     def _stream_ollama_tools(self, model: str, messages: list[dict],
                              tools_schema: list[dict], on_text) -> LLMResponse:
         payload = {
@@ -374,13 +393,7 @@ class LLMClient:
         timeout = getattr(self, "_ollama_timeout", 120)
 
         try:
-            r = self._requests.post(
-                f"{base}/api/chat",
-                json=payload,
-                timeout=timeout,
-                stream=True,
-            )
-            r.raise_for_status()
+            r = self._ollama_post(f"{base}/api/chat", payload, timeout, stream=True)
         except self._requests.exceptions.Timeout:
             raise LLMError(
                 f"Ollama timeout dopo {timeout}s — il modello è troppo lento o il contesto è troppo grande. "
@@ -784,12 +797,7 @@ class LLMClient:
         timeout = getattr(self, "_ollama_timeout", 120)
 
         try:
-            r = self._requests.post(
-                f"{base}/api/chat",
-                json=payload,
-                timeout=timeout,
-            )
-            r.raise_for_status()
+            r = self._ollama_post(f"{base}/api/chat", payload, timeout)
             data = r.json()
         except self._requests.exceptions.Timeout:
             raise LLMError(
@@ -879,8 +887,7 @@ class LLMClient:
         if self.think is not None:
             payload["think"] = self.think
         try:
-            r = self._requests.post(f"{base}/api/chat", json=payload, timeout=timeout)
-            r.raise_for_status()
+            r = self._ollama_post(f"{base}/api/chat", payload, timeout)
             msg = r.json().get("message", {}) or {}
             content = msg.get("content", "") or ""
             # Modelli reasoning: se il thinking ha consumato tutto e content è
@@ -952,11 +959,10 @@ class LLMClient:
         clean = [{"role": m["role"], "content": m.get("content", "")}
                  for m in messages if m.get("role") != "tool_result"]
         base = self.base_url or "http://localhost:11434"
-        r = self._requests.post(f"{base}/api/chat", json={
+        r = self._ollama_post(f"{base}/api/chat", {
             "model": self.model, "messages": clean, "stream": True,
             "options": {"temperature": self.temperature, "num_predict": self.max_tokens}
         }, timeout=300, stream=True)
-        r.raise_for_status()
 
         for line in r.iter_lines():
             if line:

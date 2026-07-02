@@ -475,6 +475,7 @@ def start_telegram_background(agent, ui, token):
             ui.error(f"Telegram errore: {e}")
 
     t = threading.Thread(target=run_telegram, daemon=True, name="telegram")
+    telegram._poll_thread = t  # la sentinella controlla che sia vivo
     t.start()
     ui.console.print(f"  [green]Telegram on[/green] [dim](background)[/dim]")
     return telegram
@@ -734,6 +735,71 @@ def start_heartbeat_background(agent, ui):
     ui.console.print(f"  [green]Heartbeat on[/green] [dim](every {interval_min}min, "
                      f"{config.active_hours_start}:00-{config.active_hours_end}:00)[/dim]")
     return heartbeat
+
+
+def start_sentinel_background(agent, ui, telegram_channel, heartbeat):
+    """Avvia la sentinella: si accorge quando internet/Ollama/Telegram cadono
+    E quando tornano — avvisa l'owner, riattacca Telegram da sola e sveglia
+    il heartbeat al ritorno così l'agente riprende il lavoro sospeso."""
+    try:
+        import config as _cfg
+        from core.sentinel import Sentinel, check_internet, make_ollama_check
+        from agent import OPENVURP_DIR as _workspace
+    except Exception as e:
+        ui.error(f"Sentinella non avviata: {e}")
+        return None
+
+    sentinel = Sentinel(_workspace)
+    sentinel.add_probe("internet", check_internet, label="Internet")
+
+    if str(getattr(_cfg, "LLM_BACKEND", "")) == "ollama":
+        base_url = str(getattr(_cfg, "LLM_BASE_URL", "http://localhost:11434"))
+        sentinel.add_probe("ollama", make_ollama_check(base_url), label="Ollama")
+
+    if telegram_channel is not None:
+        def _tg_check() -> bool:
+            # Stop voluto (conflitto con altra istanza, /exit): il canale è
+            # "giù" di proposito — la sentinella non deve né segnalarlo in
+            # loop né riavviarlo (sarebbe una guerra di getUpdates).
+            if getattr(telegram_channel, "stop_reason", ""):
+                return True
+            return telegram_channel.alive()
+
+        def _tg_recover() -> bool:
+            if getattr(telegram_channel, "stop_reason", ""):
+                return False
+            t = threading.Thread(
+                target=telegram_channel.start, daemon=True, name="telegram"
+            )
+            telegram_channel._poll_thread = t
+            t.start()
+            return True
+
+        sentinel.add_probe("telegram", _tg_check, recover=_tg_recover,
+                           wake_agent=False, label="Telegram")
+
+    def _notify_owner(text: str) -> bool:
+        delivered = False
+        if telegram_channel is not None and telegram_channel.alive():
+            try:
+                delivered = bool(telegram_channel.send_to_last(text))
+            except Exception:
+                delivered = False
+        try:
+            ui.console.print(f"  [dim]🛰 sentinella: {text}[/dim]")
+        except Exception:
+            pass
+        # Senza Telegram la console È il canale dell'owner: consegna riuscita.
+        return delivered or telegram_channel is None
+
+    sentinel.set_notifier(_notify_owner)
+    if heartbeat is not None:
+        sentinel.attach_heartbeat(heartbeat)
+    sentinel.start()
+    # L'agente può pungolarla (check_now) quando vede il backend LLM giù.
+    agent.sentinel = sentinel
+    ui.console.print("  [green]Sentinella on[/green] [dim](internet/ollama/telegram, auto-recovery)[/dim]")
+    return sentinel
 
 
 def start_dashboard_background(agent, ui, port=8420):
@@ -1168,6 +1234,9 @@ def main():
     # ── Heartbeat ──
     heartbeat = start_heartbeat_background(agent, ui)
 
+    # ── Sentinella (internet/ollama/telegram: caduta E ritorno) ──
+    sentinel = start_sentinel_background(agent, ui, telegram_channel, heartbeat)
+
     # ── Scheduler (messaggi programmati) ──
     from tools.scheduler import start_scheduler
     start_scheduler()
@@ -1458,6 +1527,8 @@ def main():
                 agent.cleanup()
                 if heartbeat:
                     heartbeat.stop()
+                if sentinel:
+                    sentinel.stop()
                 if telegram_channel:
                     telegram_channel.stop()
                 ui.goodbye()
@@ -1731,6 +1802,8 @@ def main():
             agent.cleanup()
             if heartbeat:
                 heartbeat.stop()
+            if sentinel:
+                sentinel.stop()
             if telegram_channel:
                 telegram_channel.stop()
             ui.goodbye()

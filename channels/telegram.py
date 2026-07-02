@@ -100,6 +100,12 @@ class TelegramChannel(Channel):
         self._running = False
         self._app = None
         self._error_callback = kwargs.get("on_error")
+        # Perché il canale si è fermato: "" (mai fermato o morte accidentale),
+        # "conflict" (altra istanza del bot: NON riavviare in automatico).
+        self.stop_reason = ""
+        # Thread di polling (impostato da chi avvia il canale): serve alla
+        # sentinella per capire se il canale è ancora vivo.
+        self._poll_thread = None
 
         # Coda messaggi per processing sequenziale
         self._msg_queue: queue.Queue = queue.Queue()
@@ -373,17 +379,26 @@ class TelegramChannel(Channel):
         except Exception:
             pass
 
+    def alive(self) -> bool:
+        """Il canale è operativo? (polling attivo e thread vivo).
+        Usato dalla sentinella per decidere se riavviarlo."""
+        t = self._poll_thread
+        return bool(self._running and t is not None and t.is_alive())
+
     def start(self):
-        """Avvia long polling."""
+        """Avvia long polling. Rilanciabile: se il polling è morto (es. rete
+        assente all'avvio) la sentinella può richiamarlo in un nuovo thread."""
         # Registra comandi nel menu del bot
         self._register_commands()
 
-        # Avvia worker per processare la coda
+        # Avvia worker per processare la coda (idempotente: uno solo)
         self._running = True
-        self._worker_thread = threading.Thread(
-            target=self._process_queue, daemon=True, name="tg-worker"
-        )
-        self._worker_thread.start()
+        self.stop_reason = ""
+        if not (self._worker_thread and self._worker_thread.is_alive()):
+            self._worker_thread = threading.Thread(
+                target=self._process_queue, daemon=True, name="tg-worker"
+            )
+            self._worker_thread.start()
 
         try:
             from telegram import Update
@@ -394,6 +409,7 @@ class TelegramChannel(Channel):
         except Exception as e:
             if "terminated by other getUpdates request" in str(e):
                 self._running = False
+                self.stop_reason = "conflict"
                 self._report_error(format_telegram_conflict_message())
                 return
             raise
@@ -412,6 +428,7 @@ class TelegramChannel(Channel):
             err = getattr(context, "error", None)
             if isinstance(err, Conflict):
                 self._running = False
+                self.stop_reason = "conflict"
                 self._report_error(format_telegram_conflict_message())
                 try:
                     context.application.stop_running()
@@ -997,6 +1014,7 @@ class TelegramChannel(Channel):
 
     def stop(self):
         self._running = False
+        self.stop_reason = self.stop_reason or "manual"  # stop voluto: niente auto-restart
         # Ferma tutti i typing loop
         for stop_event in self._typing_threads.values():
             stop_event.set()
