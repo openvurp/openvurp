@@ -159,6 +159,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # Branding pubblico (non sensibile): logo + favicon senza auth
         if path in {"/favicon.ico", "/favicon.png"}:
             return self._serve_file("dashboard/favicon.png", "image/png")
+        if path == "/octopus.png":
+            return self._serve_file("dashboard/octopus.png", "image/png")
         if path in {"/openvurp.jpg", "/logo"}:
             return self._serve_logo()
 
@@ -319,7 +321,7 @@ button{font:inherit}
 .side{width:260px;flex-shrink:0;background:var(--side);display:flex;flex-direction:column;
   padding:12px 10px;transition:width .15s ease;overflow:hidden}
 .brand{display:flex;align-items:center;gap:10px;padding:6px 8px 14px}
-.brand img{width:30px;height:30px;border-radius:8px;object-fit:cover;flex-shrink:0}
+.brand img{width:30px;height:30px;object-fit:contain;flex-shrink:0}
 .brand b{font-size:15px;font-weight:600;white-space:nowrap}
 .newchat{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;
   border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;
@@ -362,7 +364,7 @@ button{font:inherit}
 .inner{width:100%;max-width:46rem;margin:0 auto;padding:20px 20px 8px;display:flex;
   flex-direction:column;gap:22px}
 .hero{margin:auto;text-align:center;padding:40px 20px}
-.hero img{width:60px;height:60px;border-radius:16px;object-fit:cover;margin-bottom:18px}
+.hero img{width:72px;height:72px;object-fit:contain;margin-bottom:18px}
 .hero h1{font-size:26px;font-weight:600;color:var(--text)}
 .hero p{color:var(--muted);font-size:14px;margin-top:8px}
 .turn{animation:rise .15s ease both}
@@ -447,7 +449,7 @@ button{font:inherit}
 <body>
 <div class="app">
   <aside class="side">
-    <div class="brand"><img src="/openvurp.jpg" alt=""><b>openvurp</b></div>
+    <div class="brand"><img src="/octopus.png" alt=""><b>openvurp</b></div>
     <button class="newchat" id="newchat" title="Nuova chat">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       <span>Nuova chat</span>
@@ -474,7 +476,7 @@ button{font:inherit}
       <section id="view-chat" class="view active">
         <div class="chatlog" id="chatlog">
           <div class="hero" id="hero">
-            <img src="/openvurp.jpg" alt="">
+            <img src="/octopus.png" alt="">
             <h1>Come posso aiutarti?</h1>
             <p>Il tuo agente, sempre qui. Scrivi e ci pensa lui.</p>
           </div>
@@ -674,8 +676,8 @@ initChat();ping();setInterval(ping,10000);
             "<body style='font-family:system-ui;background:#212121;color:#ececec;"
             "display:grid;place-items:center;height:100vh;margin:0'>"
             "<div style='text-align:center'>"
-            "<img src='/openvurp.jpg' style='width:56px;height:56px;border-radius:14px;"
-            "object-fit:cover;margin-bottom:14px' alt=''>"
+            "<img src='/octopus.png' style='width:56px;height:56px;"
+            "object-fit:contain;margin-bottom:14px' alt=''>"
             "<h2 style='font-weight:600'>openvurp</h2>"
             "<p style='color:#9b9b9b;margin:8px 0'>Accesso protetto. Apri la dashboard col tuo token:</p>"
             "<code style='background:#2f2f2f;padding:6px 12px;border-radius:8px;font-size:13px'>"
