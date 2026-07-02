@@ -292,259 +292,368 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _serve_html(self):
         html = """<!DOCTYPE html>
-<html lang="en">
+<html lang="it">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>openvurp</title>
 <link rel="icon" type="image/png" href="/favicon.ico">
 <style>
-/* Layered glass design system, openvurp accent */
 :root{
-  --bg:#0e1015; --bg-accent:#13151b; --bg-elevated:#191c24; --bg-hover:#1f2330;
-  --card:#161920; --card-fg:#f0f0f2; --popover:#191c24;
-  --text:#d4d4d8; --text-strong:#f4f4f5; --muted:#838387; --muted-strong:#75757d;
-  --border:#1e2028; --border-strong:#2e3040;
-  --accent:#e8654a; --accent-hover:#ff7a5e; --accent-subtle:rgba(232,101,74,.12);
-  --ok:#22c55e; --warn:#f59e0b; --danger:#ef4444; --radius:14px;
+  --bg:#212121; --side:#171717; --raised:#2f2f2f; --hover:#2a2a2a;
+  --border:rgba(255,255,255,.08); --text:#ececec; --text-dim:#cdcdcd;
+  --muted:#9b9b9b; --faint:#6e6e6e;
+  --accent:#e8654a; --accent-hover:#ff7a5e; --accent-dim:rgba(232,101,74,.14);
+  --ok:#4ade80; --bad:#f87171;
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%}
-body{font-family:'Inter',ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-  background:var(--bg);color:var(--text);overflow:hidden;-webkit-font-smoothing:antialiased;font-size:14px}
-::selection{background:var(--accent-subtle)}
+body{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,sans-serif;
+  background:var(--bg);color:var(--text);overflow:hidden;font-size:15px;
+  -webkit-font-smoothing:antialiased}
+::selection{background:var(--accent-dim)}
+button{font:inherit}
 .app{display:flex;height:100vh}
-/* Tier-1 glass chrome: never flat/opaque */
-.glass1{background:color-mix(in srgb,var(--bg) 82%,transparent);
-  backdrop-filter:blur(12px) saturate(1.6);-webkit-backdrop-filter:blur(12px) saturate(1.6)}
-.glass2{background:rgba(22,25,32,.75);border:1px solid var(--border);border-radius:var(--radius);
-  backdrop-filter:blur(12px) saturate(1.6);-webkit-backdrop-filter:blur(12px) saturate(1.6)}
-@supports not (backdrop-filter:blur(1px)){.glass1{background:rgba(14,16,21,.96)}.glass2{background:var(--card)}}
 
-/* sidebar */
-.side{width:240px;flex-shrink:0;display:flex;flex-direction:column;padding:16px 12px;
-  border-right:1px solid var(--border)}
-.brandimg{width:100%;margin-bottom:18px;display:block;mix-blend-mode:screen}
-.collapsed .brandimg{aspect-ratio:1;object-fit:cover;object-position:left center;width:40px;margin:0 auto 14px}
-.nav{display:flex;flex-direction:column;gap:2px}
-.navitem{display:flex;align-items:center;gap:12px;padding:9px 11px;border-radius:10px;color:var(--muted);
-  cursor:pointer;font-weight:500;transition:background .1s,color .1s;position:relative}
-.navitem:hover{background:var(--bg-hover);color:var(--text)}
-.navitem.active{background:var(--accent-subtle);color:var(--text-strong)}
-.navitem.active::before{content:"";position:absolute;left:-12px;top:8px;bottom:8px;width:3px;
-  border-radius:0 3px 3px 0;background:var(--accent)}
-.navitem.active .ic{color:var(--accent)}
-.ic{width:17px;height:17px;flex-shrink:0;color:var(--muted-strong)}
-.foot{margin-top:auto;display:flex;align-items:center;gap:8px;padding:10px 11px;font-size:12px;color:var(--muted)}
-.pulse{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 #22c55e88;animation:pulse 2.4s infinite}
-.pulse.off{background:var(--danger);animation:none}
-@keyframes pulse{0%{box-shadow:0 0 0 0 #22c55e55}70%{box-shadow:0 0 0 7px #22c55e00}100%{box-shadow:0 0 0 0 #22c55e00}}
-
-/* content */
-.content{flex:1;display:flex;flex-direction:column;min-width:0}
-.topbar{display:flex;align-items:center;gap:10px;padding:15px 22px;border-bottom:1px solid var(--border)}
-.topbar h1{font-size:15px;font-weight:600;color:var(--text-strong)}
-.topbar .hint{margin-left:auto;font-size:12px;color:var(--muted)}
-.panel{flex:1;overflow:hidden}
-.view{display:none;height:100%;overflow-y:auto;padding:22px}
-.view.active{display:block}
-#view-chat.active{display:flex;flex-direction:column;padding:0}
-.scroll::-webkit-scrollbar{width:10px}.scroll::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:99px;border:3px solid var(--bg)}
-
-/* chat */
-.chatlog{flex:1;overflow-y:auto;padding:28px 0;display:flex;flex-direction:column;gap:6px}
-.row{display:flex;gap:14px;padding:10px clamp(16px,8vw,140px);align-items:flex-start;animation:rise .12s ease both}
-.row:hover{background:rgba(255,255,255,.012)}
-@keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
-.av{width:28px;height:28px;border-radius:8px;flex-shrink:0;display:grid;place-items:center;font-size:13px;font-weight:600;margin-top:1px}
-.av.bot{background:var(--accent);color:#1a0d08}
-.av.me{background:var(--bg-hover);color:var(--muted);font-size:11px}
-.msg{flex:1;min-width:0}
-.who{font-size:12px;font-weight:600;color:var(--text-strong);margin-bottom:3px}
-.body{font-size:14.5px;line-height:1.65;color:var(--text);white-space:pre-wrap;word-break:break-word}
-.sys{text-align:center;color:var(--muted);font-size:13px;padding:8px;animation:rise .12s}
-.typing{display:flex;gap:5px;padding:5px 0}
-.typing i{width:6px;height:6px;border-radius:50%;background:var(--muted);animation:tp 1.1s infinite}
-.typing i:nth-child(2){animation-delay:.16s}.typing i:nth-child(3){animation-delay:.32s}
-@keyframes tp{0%,80%,100%{opacity:.3;transform:scale(.7)}40%{opacity:1;transform:scale(1)}}
-.composer{padding:14px clamp(16px,8vw,140px) 20px}
-.composer .box{display:flex;gap:8px;align-items:flex-end;padding:8px 8px 8px 14px;border-radius:14px;transition:border-color .1s}
-.composer .box:focus-within{border-color:var(--border-strong)}
-.composer textarea{flex:1;background:none;border:none;color:var(--text);font:inherit;font-size:14.5px;
-  resize:none;max-height:180px;padding:6px 0;outline:none}
-.composer textarea::placeholder{color:var(--muted-strong)}
-.send{flex-shrink:0;width:36px;height:36px;border:none;border-radius:10px;cursor:pointer;
-  background:var(--accent);color:#1a0d08;display:grid;place-items:center;transition:background .1s,opacity .1s}
-.send:hover{background:var(--accent-hover)}
-.send:disabled{background:var(--bg-hover);color:var(--muted-strong);cursor:not-allowed}
-
-/* cards */
-.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
-.card{padding:18px}
-.card h3{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:14px;font-weight:600}
-.kv{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--border);font-size:13.5px}
-.kv:last-child{border:0}.kv .k{color:var(--muted)}.kv .v{color:var(--text-strong);text-align:right;word-break:break-word}
-.sec{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0 0 12px;font-weight:600}
-.list{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
-.tile{padding:13px 15px}
-.tile .t{font-weight:600;color:var(--text-strong);font-size:14px}.tile .m{color:var(--muted);font-size:12.5px;margin-top:5px}
-.tag{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;margin:0 4px 4px 0;background:var(--bg-hover);color:var(--muted)}
-.tag.ok{background:rgba(34,197,94,.14);color:#5ee08a}.tag.warn{background:rgba(245,158,11,.14);color:#fbbf52}.tag.bad{background:rgba(239,68,68,.14);color:#f78a8a}
-.empty{color:var(--muted);font-size:13.5px}
-#err{display:none;color:#f78a8a;font-size:13px;padding:10px 22px}
-/* collapsed sidebar: solo il polpo */
-.side{transition:width .16s ease}
-.collapsed .side{width:64px;padding-left:8px;padding-right:8px}
-.collapsed .navitem{justify-content:center;padding-left:0;padding-right:0}
-.collapsed .navitem span,.collapsed #conn-label{display:none}
-.collapsed .navitem.active::before{left:-8px}
-.collapsebtn{margin-left:auto;background:none;border:none;color:var(--muted-strong);cursor:pointer;
-  padding:6px;border-radius:8px;display:grid;place-items:center}
-.collapsebtn:hover{background:var(--bg-hover);color:var(--text)}
-.collapsebtn svg{transition:transform .16s}
+/* ── Sidebar ── */
+.side{width:260px;flex-shrink:0;background:var(--side);display:flex;flex-direction:column;
+  padding:12px 10px;transition:width .15s ease;overflow:hidden}
+.brand{display:flex;align-items:center;gap:10px;padding:6px 8px 14px}
+.brand img{width:30px;height:30px;border-radius:8px;object-fit:cover;flex-shrink:0}
+.brand b{font-size:15px;font-weight:600;white-space:nowrap}
+.newchat{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;
+  border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;
+  font-size:13.5px;white-space:nowrap}
+.newchat:hover{background:var(--hover)}
+.newchat svg{flex-shrink:0}
+.navsec{margin-top:auto;padding-top:10px;border-top:1px solid var(--border);
+  display:flex;flex-direction:column;gap:1px}
+.navitem{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;
+  color:var(--muted);cursor:pointer;font-size:13px;white-space:nowrap}
+.navitem:hover{background:var(--hover);color:var(--text-dim)}
+.navitem.active{background:var(--hover);color:var(--text)}
+.navitem svg{width:15px;height:15px;flex-shrink:0;opacity:.8}
+.foot{display:flex;align-items:center;gap:8px;padding:10px 10px 4px;font-size:12px;color:var(--faint)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ok);flex-shrink:0}
+.dot.off{background:var(--bad)}
+.collapsebtn{margin-left:auto;background:none;border:none;color:var(--faint);cursor:pointer;
+  padding:4px;border-radius:6px;display:grid;place-items:center}
+.collapsebtn:hover{background:var(--hover);color:var(--text-dim)}
+.collapsed .side{width:60px;padding-left:6px;padding-right:6px}
+.collapsed .brand b,.collapsed .newchat span,.collapsed .navitem span,.collapsed #conn-label{display:none}
+.collapsed .newchat,.collapsed .navitem{justify-content:center}
 .collapsed .collapsebtn{margin:0 auto}
 .collapsed .collapsebtn svg{transform:rotate(180deg)}
-/* chat steps (cosa fa) */
-.steps{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
-.step{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted)}
-.step .si{width:13px;height:13px;flex-shrink:0;color:var(--accent);opacity:.85}
-.step.done .si{color:var(--ok)}
-.step code{color:var(--text);font-size:12px;word-break:break-all}
-@media(max-width:760px){.side{width:64px}.navitem span,#conn-label{display:none}.navitem{justify-content:center}}
+
+/* ── Main ── */
+.main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+.topbar{display:flex;align-items:center;gap:8px;padding:12px 20px;font-size:14px;
+  color:var(--muted);flex-shrink:0}
+.topbar b{color:var(--text);font-weight:600}
+#err{display:none;color:var(--bad);font-size:13px;padding:0 20px 8px}
+.panel{flex:1;min-height:0;display:flex;flex-direction:column}
+.view{display:none;flex:1;min-height:0;overflow-y:auto}
+.view.active{display:block}
+#view-chat{flex-direction:column;overflow:hidden}
+#view-chat.active{display:flex}
+
+/* ── Chat ── */
+.chatlog{flex:1;overflow-y:auto;display:flex;flex-direction:column;scroll-behavior:smooth}
+.inner{width:100%;max-width:46rem;margin:0 auto;padding:20px 20px 8px;display:flex;
+  flex-direction:column;gap:22px}
+.hero{margin:auto;text-align:center;padding:40px 20px}
+.hero img{width:60px;height:60px;border-radius:16px;object-fit:cover;margin-bottom:18px}
+.hero h1{font-size:26px;font-weight:600;color:var(--text)}
+.hero p{color:var(--muted);font-size:14px;margin-top:8px}
+.turn{animation:rise .15s ease both}
+@keyframes rise{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+.turn.user{display:flex;justify-content:flex-end}
+.turn.user .bub{background:var(--raised);border-radius:18px;padding:9px 16px;max-width:75%;
+  line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.turn.user .meta{font-size:11.5px;color:var(--faint);text-align:right;margin-top:4px}
+.turn.bot .body{line-height:1.7;word-break:break-word}
+.turn.bot .body p{margin:0 0 10px}
+.turn.bot .body p:last-child{margin-bottom:0}
+.turn.bot .body h2,.turn.bot .body h3,.turn.bot .body h4{margin:14px 0 8px;font-weight:600;line-height:1.35}
+.turn.bot .body h2{font-size:19px}.turn.bot .body h3{font-size:16.5px}.turn.bot .body h4{font-size:15px}
+.turn.bot .body ul,.turn.bot .body ol{margin:0 0 10px;padding-left:22px}
+.turn.bot .body li{margin:3px 0}
+.turn.bot .body a{color:var(--accent);text-decoration:none}
+.turn.bot .body a:hover{text-decoration:underline}
+.turn.bot .body code{background:var(--raised);border-radius:5px;padding:1.5px 6px;
+  font-size:.87em;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.turn.bot .body pre{background:#181818;border:1px solid var(--border);border-radius:10px;
+  padding:13px 15px;overflow-x:auto;margin:0 0 10px}
+.turn.bot .body pre code{background:none;padding:0;font-size:13px;line-height:1.55;color:var(--text-dim)}
+.activity{margin-bottom:8px;font-size:12.5px;color:var(--faint)}
+.activity summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:6px;
+  padding:3px 10px;border-radius:99px;border:1px solid var(--border);color:var(--muted);user-select:none}
+.activity summary::-webkit-details-marker{display:none}
+.activity summary:hover{background:var(--hover)}
+.activity[open] summary{margin-bottom:6px}
+.activity .st{display:flex;gap:8px;align-items:baseline;padding:2px 0 2px 12px}
+.activity .st b{color:var(--accent);font-weight:500;flex-shrink:0;font-family:ui-monospace,monospace}
+.activity .st code{color:var(--muted);font-size:12px;word-break:break-all;font-family:ui-monospace,monospace}
+.thinking{display:inline-flex;gap:4px;padding:6px 0}
+.thinking i{width:7px;height:7px;border-radius:50%;background:var(--muted);animation:tp 1.2s infinite}
+.thinking i:nth-child(2){animation-delay:.15s}.thinking i:nth-child(3){animation-delay:.3s}
+@keyframes tp{0%,80%,100%{opacity:.25;transform:scale(.75)}40%{opacity:1;transform:scale(1)}}
+.srcnote{font-size:11.5px;color:var(--faint);margin-bottom:5px}
+
+/* ── Composer ── */
+.composer{flex-shrink:0;padding:8px 20px 18px}
+.composer .wrap{max-width:46rem;margin:0 auto}
+.composer .box{display:flex;align-items:flex-end;gap:6px;background:var(--raised);
+  border-radius:26px;padding:9px 9px 9px 20px;box-shadow:0 0 0 1px var(--border)}
+.composer .box:focus-within{box-shadow:0 0 0 1px rgba(255,255,255,.16)}
+.composer textarea{flex:1;background:none;border:none;outline:none;resize:none;color:var(--text);
+  font:inherit;line-height:1.5;max-height:200px;padding:4px 0}
+.composer textarea::placeholder{color:var(--faint)}
+.send{width:34px;height:34px;flex-shrink:0;border:none;border-radius:50%;cursor:pointer;
+  background:var(--accent);color:#fff;display:grid;place-items:center;transition:background .1s}
+.send:hover{background:var(--accent-hover)}
+.send:disabled{background:var(--hover);color:var(--faint);cursor:default}
+.finehint{text-align:center;font-size:11.5px;color:var(--faint);margin-top:9px}
+
+/* ── Pannelli secondari (minimali) ── */
+.pad{max-width:52rem;margin:0 auto;padding:24px 20px}
+.pgrid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.pcard{border:1px solid var(--border);border-radius:12px;padding:16px}
+.pcard h3{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);
+  font-weight:600;margin-bottom:12px}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:6px 0;font-size:13.5px}
+.kv .k{color:var(--muted)}.kv .v{color:var(--text);text-align:right;word-break:break-word}
+.sec{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);
+  font-weight:600;margin:0 0 10px}
+.plist{display:flex;flex-direction:column;gap:8px}
+.tile{border:1px solid var(--border);border-radius:12px;padding:12px 15px}
+.tile .t{font-weight:600;font-size:13.5px}
+.tile .m{color:var(--muted);font-size:12.5px;margin-top:4px;word-break:break-word}
+.tag{display:inline-block;padding:1.5px 8px;border-radius:99px;font-size:11px;margin-left:6px;
+  background:var(--hover);color:var(--muted)}
+.tag.ok{color:var(--ok)}.tag.bad{color:var(--bad)}
+.emptymsg{color:var(--faint);font-size:13.5px}
+
+.chatlog::-webkit-scrollbar,.view::-webkit-scrollbar{width:8px}
+.chatlog::-webkit-scrollbar-thumb,.view::-webkit-scrollbar-thumb{background:var(--raised);border-radius:99px}
+@media(max-width:760px){
+  .side{width:60px;padding-left:6px;padding-right:6px}
+  .brand b,.newchat span,.navitem span,#conn-label{display:none}
+  .newchat,.navitem{justify-content:center}
+  .turn.user .bub{max-width:88%}
+}
 </style>
 </head>
 <body>
 <div class="app">
-  <aside class="side glass1">
-    <img src="/openvurp.jpg" class="brandimg" alt="openvurp">
-    <nav class="nav" id="nav">
-      <div class="navitem active" data-tab="chat"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>Chat</span></div>
-      <div class="navitem" data-tab="runtime"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg><span>Runtime</span></div>
-      <div class="navitem" data-tab="memory"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 0 0-7 7c0 3 2 5 2 7v3h10v-3c0-2 2-4 2-7a7 7 0 0 0-7-7z"/></svg><span>Memory</span></div>
-      <div class="navitem" data-tab="sessions"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5h18M3 12h18M3 19h18"/></svg><span>Sessions</span></div>
-      <div class="navitem" data-tab="agents"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg><span>Agents</span></div>
-      <div class="navitem" data-tab="events"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg><span>Events</span></div>
-    </nav>
-    <div class="foot"><span class="pulse" id="conn"></span><span id="conn-label">connected</span><button class="collapsebtn" id="collapse" title="Collapse sidebar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></button></div>
+  <aside class="side">
+    <div class="brand"><img src="/openvurp.jpg" alt=""><b>openvurp</b></div>
+    <button class="newchat" id="newchat" title="Nuova chat">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      <span>Nuova chat</span>
+    </button>
+    <div class="navsec">
+      <div class="navitem active" data-tab="chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>Chat</span></div>
+      <div class="navitem" data-tab="runtime"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg><span>Runtime</span></div>
+      <div class="navitem" data-tab="memory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 0 0-7 7c0 3 2 5 2 7v3h10v-3c0-2 2-4 2-7a7 7 0 0 0-7-7z"/></svg><span>Memoria</span></div>
+      <div class="navitem" data-tab="sessions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5h18M3 12h18M3 19h18"/></svg><span>Sessioni</span></div>
+      <div class="navitem" data-tab="agents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg><span>Agenti</span></div>
+      <div class="navitem" data-tab="events"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg><span>Eventi</span></div>
+    </div>
+    <div class="foot"><span class="dot" id="conn"></span><span id="conn-label">connesso</span>
+      <button class="collapsebtn" id="collapse" title="Riduci">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+    </div>
   </aside>
 
-  <div class="content">
-    <div class="topbar glass1"><h1 id="tab-title">Chat</h1><span class="hint" id="tab-hint">talk to your agent</span></div>
+  <div class="main">
+    <div class="topbar"><b>openvurp</b><span id="model-label"></span></div>
     <p id="err"></p>
     <div class="panel">
       <section id="view-chat" class="view active">
-        <div class="chatlog scroll" id="chatlog"></div>
-        <form class="composer" id="form"><div class="box glass2">
-          <textarea id="input" rows="1" placeholder="Message openvurp…"></textarea>
-          <button class="send" id="send" type="submit" title="Send"><svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6 3 10l12 2-12 2z"/></svg></button>
+        <div class="chatlog" id="chatlog">
+          <div class="hero" id="hero">
+            <img src="/openvurp.jpg" alt="">
+            <h1>Come posso aiutarti?</h1>
+            <p>Il tuo agente, sempre qui. Scrivi e ci pensa lui.</p>
+          </div>
+          <div class="inner" id="log"></div>
+        </div>
+        <form class="composer" id="form"><div class="wrap">
+          <div class="box">
+            <textarea id="input" rows="1" placeholder="Scrivi a openvurp…"></textarea>
+            <button class="send" id="send" type="submit" title="Invia">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            </button>
+          </div>
+          <div class="finehint">openvurp lavora in locale sul tuo computer.</div>
         </div></form>
       </section>
-      <section id="view-runtime" class="view scroll"><div class="grid" id="runtime-grid"></div></section>
-      <section id="view-memory" class="view scroll"><div class="grid" id="memory-grid"></div></section>
-      <section id="view-sessions" class="view scroll">
-        <div class="sec">Route sessions</div><div class="list" id="route-sessions"></div>
-        <div class="sec" style="margin-top:22px">Saved sessions</div><div class="list" id="saved-sessions"></div>
-      </section>
-      <section id="view-agents" class="view scroll"><div class="list" id="subagents"></div></section>
-      <section id="view-events" class="view scroll"><div class="list" id="events" style="grid-template-columns:1fr"></div></section>
+      <section id="view-runtime" class="view"><div class="pad"><div class="pgrid" id="runtime-grid"></div></div></section>
+      <section id="view-memory" class="view"><div class="pad"><div class="pgrid" id="memory-grid"></div></div></section>
+      <section id="view-sessions" class="view"><div class="pad">
+        <div class="sec">Sessioni attive</div><div class="plist" id="route-sessions"></div>
+        <div class="sec" style="margin-top:22px">Sessioni salvate</div><div class="plist" id="saved-sessions"></div>
+      </div></section>
+      <section id="view-agents" class="view"><div class="pad"><div class="plist" id="subagents"></div></div></section>
+      <section id="view-events" class="view"><div class="pad"><div class="plist" id="events"></div></div></section>
     </div>
   </div>
 </div>
 <script>
 const $=s=>document.querySelector(s);
-const HINTS={chat:"talk to your agent",runtime:"live runtime status",memory:"what the agent remembers",sessions:"conversations",agents:"subagents at work",events:"runtime events"};
 function setErr(m){const e=$("#err");if(!m){e.style.display="none";return}e.style.display="block";e.textContent=m}
 async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error(u+" -> "+r.status);return r.json()}
 const kv=(k,v)=>`<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
-const card=(t,i)=>`<div class="card glass2"><h3>${t}</h3>${i}</div>`;
-const tile=(i)=>`<div class="tile glass2">${i}</div>`;
+const card=(t,i)=>`<div class="pcard"><h3>${t}</h3>${i}</div>`;
+const tile=(i)=>`<div class="tile">${i}</div>`;
 const tagg=(t,c)=>`<span class="tag ${c||''}">${t}</span>`;
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-// collapse sidebar (persistente)
+
+/* Markdown minimale e sicuro: prima si escapa TUTTO, poi si trasforma.
+   Copre ciò che l'agente usa davvero: code block, inline code, grassetto,
+   corsivo, titoli, liste, link. */
+function md(t){
+  const blocks=[];
+  let s=String(t).replace(/```(?:\\w*\\n)?([\\s\\S]*?)```/g,(m,c)=>{
+    blocks.push('<pre><code>'+esc(c.replace(/\\n$/,''))+'</code></pre>');
+    return '\\u0000'+(blocks.length-1)+'\\u0000';
+  });
+  s=esc(s);
+  s=s.replace(/`([^`\\n]+)`/g,'<code>$1</code>');
+  s=s.replace(/^#### (.+)$/gm,'<h4>$1</h4>').replace(/^### (.+)$/gm,'<h4>$1</h4>')
+     .replace(/^## (.+)$/gm,'<h3>$1</h3>').replace(/^# (.+)$/gm,'<h2>$1</h2>');
+  s=s.replace(/\\*\\*([^*]+)\\*\\*/g,'<b>$1</b>');
+  s=s.replace(/(^|[\\s(])\\*([^*\\n]+)\\*(?=[\\s).,;:!?]|$)/g,'$1<i>$2</i>');
+  s=s.replace(/\\[([^\\]]+)\\]\\((https?:[^)\\s]+)\\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+  s=s.replace(/^(?:[-*]|\\d+\\.) .+(?:\\n(?:[-*]|\\d+\\.) .+)*/gm,
+    b=>'<ul>'+b.split('\\n').map(l=>'<li>'+l.replace(/^(?:[-*]|\\d+\\.) /,'')+'</li>').join('')+'</ul>');
+  s=s.split(/\\n{2,}/).map(p=>{
+    if(/^<(h\\d|ul|pre)/.test(p.trim()))return p;
+    return '<p>'+p.replace(/\\n/g,'<br>')+'</p>';
+  }).join('');
+  s=s.replace(/\\u0000(\\d+)\\u0000/g,(m,i)=>blocks[+i]);
+  return s;
+}
+
+/* ── layout: sidebar ── */
 const app=document.querySelector(".app");
 if(localStorage.getItem("ov_collapsed")==="1")app.classList.add("collapsed");
-$("#collapse").onclick=()=>{app.classList.toggle("collapsed");localStorage.setItem("ov_collapsed",app.classList.contains("collapsed")?"1":"0")};
+$("#collapse").onclick=()=>{app.classList.toggle("collapsed");
+  localStorage.setItem("ov_collapsed",app.classList.contains("collapsed")?"1":"0")};
 document.querySelectorAll(".navitem").forEach(n=>n.onclick=()=>select(n.dataset.tab));
 function select(id){
   document.querySelectorAll(".navitem").forEach(n=>n.classList.toggle("active",n.dataset.tab===id));
   document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
   $("#view-"+id).classList.add("active");
-  $("#tab-title").textContent=id[0].toUpperCase()+id.slice(1);$("#tab-hint").textContent=HINTS[id]||"";
   if(id==="chat")$("#input").focus();else loadTab(id);
 }
-function bubble(role,text){
-  const log=$("#chatlog");
-  const d=document.createElement("div");d.className="sys";d.textContent=text;log.appendChild(d);log.scrollTop=1e9;return d;
+$("#newchat").onclick=()=>{$("#log").innerHTML="";$("#hero").style.display="";select("chat")};
+
+/* ── chat: rendering dei turni ── */
+const log=$("#log"),chatlog=$("#chatlog");
+function hideHero(){$("#hero").style.display="none"}
+function scrollDown(){chatlog.scrollTop=chatlog.scrollHeight}
+function addUser(text,who,source){
+  hideHero();
+  const d=document.createElement("div");d.className="turn user";
+  let meta="";
+  if((who&&who!=="user"&&who!=="system")||(source&&source!=="dashboard"&&source!=="cli"))
+    meta='<div class="meta">'+esc(who||"")+(source&&source!=="dashboard"&&source!=="cli"?" · "+esc(source):"")+'</div>';
+  d.innerHTML='<div><div class="bub"></div>'+meta+'</div>';
+  d.querySelector(".bub").textContent=text;
+  log.appendChild(d);scrollDown();
 }
-// --- live stream: tutto ciò che fa l'agente (CLI/Telegram/heartbeat/dashboard) ---
+function newBotTurn(){
+  hideHero();
+  const d=document.createElement("div");d.className="turn bot";
+  d.innerHTML='<details class="activity" style="display:none"><summary>'+
+    '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>'+
+    '<span class="alabel">attività</span></summary><div class="asteps"></div></details>'+
+    '<div class="thinking"><i></i><i></i><i></i></div><div class="body"></div>';
+  log.appendChild(d);scrollDown();
+  return {el:d,activity:d.querySelector(".activity"),steps:d.querySelector(".asteps"),
+    alabel:d.querySelector(".alabel"),think:d.querySelector(".thinking"),
+    body:d.querySelector(".body"),text:"",nsteps:0};
+}
 let curBot=null,lastSeq=0;
-function srcTag(s){return (s&&s!=="dashboard"&&s!=="cli")?' <span style="color:var(--muted);font-weight:400">· '+esc(s)+'</span>':"";}
-function newBotRow(){
-  const log=$("#chatlog");const row=document.createElement("div");row.className="row";
-  row.innerHTML='<div class="av bot">🐙</div><div class="msg"><div class="who">openvurp</div><div class="steps"></div><div class="body"></div></div>';
-  log.appendChild(row);log.scrollTop=log.scrollHeight;
-  return {steps:row.querySelector(".steps"),body:row.querySelector(".body"),text:""};
-}
 function onEvent(e){
   if(e.seq){if(e.seq<=lastSeq)return;lastSeq=e.seq;}
-  const log=$("#chatlog");
   if(e.kind==="user"){
-    curBot=null;const who=(e.sender&&e.sender!=="user"&&e.sender!=="system")?e.sender:"You";
-    const row=document.createElement("div");row.className="row";
-    row.innerHTML='<div class="av me">'+esc((who[0]||"y").toLowerCase())+'</div><div class="msg"><div class="who">'+esc(who)+srcTag(e.source)+'</div><div class="body"></div></div>';
-    row.querySelector(".body").textContent=e.text||"";log.appendChild(row);log.scrollTop=1e9;
+    if(curBot){curBot.think.remove();curBot=null;}
+    addUser(e.text||"",e.sender||"",e.source||"");
   }else if(e.kind==="step"){
-    if(!curBot)curBot=newBotRow();
-    const ic=e.step==="shell"?"$":(e.step==="tool"?"⚙":"·");
-    const d=document.createElement("div");d.className="step done";
-    d.innerHTML='<span class="si">'+ic+'</span><code></code>';d.querySelector("code").textContent=e.text||"";
-    curBot.steps.appendChild(d);log.scrollTop=1e9;
+    if(!curBot)curBot=newBotTurn();
+    curBot.activity.style.display="";curBot.nsteps++;
+    curBot.alabel.textContent="attività · "+curBot.nsteps;
+    const d=document.createElement("div");d.className="st";
+    d.innerHTML='<b>'+(e.step==="shell"?"$":"⚙")+'</b><code></code>';
+    d.querySelector("code").textContent=e.text||"";
+    curBot.steps.appendChild(d);scrollDown();
   }else if(e.kind==="assistant_start"){
-    if(!curBot)curBot=newBotRow();
+    if(!curBot)curBot=newBotTurn();
   }else if(e.kind==="token"){
-    if(!curBot)curBot=newBotRow();
-    curBot.text+=(e.text||"");curBot.body.textContent=curBot.text;log.scrollTop=1e9;
-  }else if(e.kind==="assistant_end"){curBot=null;}
+    if(!curBot)curBot=newBotTurn();
+    curBot.think.style.display="none";
+    curBot.text+=(e.text||"");
+    curBot.body.innerHTML=md(curBot.text);scrollDown();
+  }else if(e.kind==="assistant_end"){
+    if(curBot){curBot.think.remove();}
+    curBot=null;
+  }
 }
 function connectStream(){
-  try{const es=new EventSource("/api/stream");es.onmessage=ev=>{try{onEvent(JSON.parse(ev.data))}catch(_){}};}catch(e){}
+  try{const es=new EventSource("/api/stream");
+    es.onmessage=ev=>{try{onEvent(JSON.parse(ev.data))}catch(_){}};}catch(e){}
 }
+
+/* ── composer ── */
 async function initChat(){
   const input=$("#input"),send=$("#send"),form=$("#form");
   let ok=false;try{ok=(await jget("/api/chat")).available}catch(e){}
-  connectStream();  // mostra l'attività dal vivo comunque
-  if(!ok){input.disabled=send.disabled=true;input.placeholder="chat unavailable — run the dashboard from the host with the agent";return;}
-  input.oninput=()=>{input.style.height="auto";input.style.height=Math.min(input.scrollHeight,180)+"px"};
+  connectStream();
+  if(!ok){input.disabled=send.disabled=true;
+    input.placeholder="chat non disponibile — avvia la dashboard dall'host con l'agente";return;}
+  input.oninput=()=>{input.style.height="auto";input.style.height=Math.min(input.scrollHeight,200)+"px"};
   input.onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();form.requestSubmit();}};
   form.onsubmit=async e=>{
     e.preventDefault();const msg=input.value.trim();if(!msg)return;
     input.value="";input.style.height="auto";send.disabled=true;
-    try{await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:msg})});}
-    catch(err){bubble("sys","error: "+err.message);}
+    try{await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({message:msg})});}
+    catch(err){setErr("errore: "+err.message);}
     finally{send.disabled=false;input.focus();}
   };
+  input.focus();
 }
+
+/* ── pannelli secondari ── */
 async function loadTab(id){try{setErr("");
   if(id==="runtime"){
     const[s,mem,pl]=await Promise.all([jget("/api/status"),jget("/api/memory"),jget("/api/plugins")]);
     const rt=s.runtime||{},cur=s.current_session||{},st=mem.stats||{};
-    let h=card("Runtime",kv("Model",rt.model||"?")+kv("Backend",rt.backend||"?")+kv("Gateway",rt.gateway_enabled?`${rt.gateway_host}:${rt.gateway_port}`:"disabled")+kv("Snapshots",rt.sessions||0));
-    h+=card("Current route",(cur&&cur.key)?kv("Key",cur.key)+kv("State",cur.state||"idle")+kv("Turns",cur.turns||0)+kv("Tools",cur.tool_calls||0)+kv("Tokens",cur.tokens_total||0):'<div class="empty">No route session yet.</div>');
-    h+=card("Memory",kv("Files",st.files||0)+kv("Lessons",st.lessons||0)+kv("Projects",st.projects||0)+kv("Size",((st.total_size||0)/1024).toFixed(1)+" KB"));
-    const rows=pl.plugins||[];h+=card("Plugins",rows.length?rows.map(p=>tagg((p.name||p.id||"")+" "+(p.version||""),p.status==="loaded"?"ok":(p.status==="error"?"warn":""))).join(""):'<div class="empty">No plugins.</div>');
+    let h=card("Runtime",kv("Modello",rt.model||"?")+kv("Backend",rt.backend||"?")+kv("Gateway",rt.gateway_enabled?`${rt.gateway_host}:${rt.gateway_port}`:"off")+kv("Snapshot",rt.sessions||0));
+    h+=card("Sessione corrente",(cur&&cur.key)?kv("Chiave",cur.key)+kv("Stato",cur.state||"idle")+kv("Turni",cur.turns||0)+kv("Tool",cur.tool_calls||0)+kv("Token",cur.tokens_total||0):'<div class="emptymsg">Nessuna sessione ancora.</div>');
+    h+=card("Memoria",kv("File",st.files||0)+kv("Lezioni",st.lessons||0)+kv("Progetti",st.projects||0)+kv("Peso",((st.total_size||0)/1024).toFixed(1)+" KB"));
+    const rows=pl.plugins||[];h+=card("Plugin",rows.length?rows.map(p=>tagg((p.name||p.id||"")+" "+(p.version||""),p.status==="loaded"?"ok":(p.status==="error"?"bad":""))).join(""):'<div class="emptymsg">Nessun plugin.</div>');
     $("#runtime-grid").innerHTML=h;
   }else if(id==="memory"){const mem=await jget("/api/memory");const st=mem.stats||{};
-    $("#memory-grid").innerHTML=card("Memory",kv("Files",st.files||0)+kv("Lessons",st.lessons||0)+kv("Projects",st.projects||0)+kv("Diary",st.diary_entries||0)+kv("Size",((st.total_size||0)/1024).toFixed(1)+" KB"));
+    $("#memory-grid").innerHTML=card("Memoria",kv("File",st.files||0)+kv("Lezioni",st.lessons||0)+kv("Progetti",st.projects||0)+kv("Diario",st.diary_entries||0)+kv("Peso",((st.total_size||0)/1024).toFixed(1)+" KB"));
   }else if(id==="sessions"){const d=await jget("/api/sessions");
-    const fill=(a,r,f)=>{$("#"+a).innerHTML=(r&&r.length)?r.map(f).join(""):'<div class="empty">none</div>'};
-    fill("route-sessions",d.route_sessions||[],i=>tile(`<div class="t">${i.key}</div><div class="m">${i.state||"idle"} · llm ${i.llm_calls||0} · tools ${i.tool_calls||0} · tok ${i.tokens_total||0}</div>`));
-    fill("saved-sessions",d.saved_sessions||[],i=>tile(`<div class="t">${i.id||"-"}</div><div class="m">${i.turns||0} turns · ${i.tool_calls||0} tools</div>`));
+    const fill=(a,r,f)=>{$("#"+a).innerHTML=(r&&r.length)?r.map(f).join(""):'<div class="emptymsg">nessuna</div>'};
+    fill("route-sessions",d.route_sessions||[],i=>tile(`<div class="t">${esc(i.key)}</div><div class="m">${esc(i.state||"idle")} · llm ${i.llm_calls||0} · tool ${i.tool_calls||0} · token ${i.tokens_total||0}</div>`));
+    fill("saved-sessions",d.saved_sessions||[],i=>tile(`<div class="t">${esc(i.id||"-")}</div><div class="m">${i.turns||0} turni · ${i.tool_calls||0} tool</div>`));
   }else if(id==="agents"){const d=await jget("/api/subagents");const r=d.subagents||[];
-    $("#subagents").innerHTML=r.length?r.map(i=>tile(`<div class="t">${i.id} ${tagg(i.status||"?",i.status==="completed"?"ok":(["failed","timed_out"].includes(i.status)?"bad":""))}</div><div class="m">${i.mode||"text"} · ${i.backend||"?"} · ${i.model||"?"}</div>`)).join(""):'<div class="empty">No subagents.</div>';
+    $("#subagents").innerHTML=r.length?r.map(i=>tile(`<div class="t">${esc(i.id)} ${tagg(i.status||"?",i.status==="completed"?"ok":(["failed","timed_out"].includes(i.status)?"bad":""))}</div><div class="m">${esc(i.mode||"text")} · ${esc(i.backend||"?")} · ${esc(i.model||"?")}</div>`)).join(""):'<div class="emptymsg">Nessun subagente.</div>';
   }else if(id==="events"){const d=await jget("/api/events");const r=d.events||[];
-    $("#events").innerHTML=r.length?r.map(i=>tile(`<div class="t" style="color:var(--accent)">${i.event||"event"}</div><div class="m" style="word-break:break-all">${JSON.stringify(i.payload||{}).slice(0,260)}</div>`)).join(""):'<div class="empty">No events.</div>';
-  }}catch(err){setErr("Dashboard error: "+err.message)}}
-async function ping(){const c=$("#conn"),l=$("#conn-label");try{await jget("/api/status");c.classList.remove("off");l.textContent="connected"}catch(e){c.classList.add("off");l.textContent="offline"}}
+    $("#events").innerHTML=r.length?r.map(i=>tile(`<div class="t" style="color:var(--accent)">${esc(i.event||"event")}</div><div class="m">${esc(JSON.stringify(i.payload||{}).slice(0,260))}</div>`)).join(""):'<div class="emptymsg">Nessun evento.</div>';
+  }}catch(err){setErr("Errore dashboard: "+err.message)}}
+
+async function ping(){const c=$("#conn"),l=$("#conn-label"),m=$("#model-label");
+  try{const s=await jget("/api/status");c.classList.remove("off");l.textContent="connesso";
+    const rt=s.runtime||{};if(rt.model)m.textContent=" · "+rt.model;}
+  catch(e){c.classList.add("off");l.textContent="offline"}}
 initChat();ping();setInterval(ping,10000);
 </script>
 </body>
@@ -562,11 +671,15 @@ initChat();ping();setInterval(ping,10000);
     def _serve_unauthorized(self):
         page = (
             "<!doctype html><meta charset=utf-8><title>openvurp</title>"
-            "<body style='font-family:system-ui;background:#0e1015;color:#d4d4d8;"
+            "<body style='font-family:system-ui;background:#212121;color:#ececec;"
             "display:grid;place-items:center;height:100vh;margin:0'>"
-            "<div style='text-align:center'><h2 style='color:#e8654a'>openvurp</h2>"
-            "<p>Unauthorized. Open the dashboard with your token:</p>"
-            "<code>http://&lt;host&gt;:PORT/?token=YOUR_TOKEN</code></div></body>"
+            "<div style='text-align:center'>"
+            "<img src='/openvurp.jpg' style='width:56px;height:56px;border-radius:14px;"
+            "object-fit:cover;margin-bottom:14px' alt=''>"
+            "<h2 style='font-weight:600'>openvurp</h2>"
+            "<p style='color:#9b9b9b;margin:8px 0'>Accesso protetto. Apri la dashboard col tuo token:</p>"
+            "<code style='background:#2f2f2f;padding:6px 12px;border-radius:8px;font-size:13px'>"
+            "http://&lt;host&gt;:PORT/?token=IL_TUO_TOKEN</code></div></body>"
         )
         body = page.encode("utf-8")
         self.send_response(401)
