@@ -174,21 +174,23 @@ class UI:
         self._backend = backend
 
         # Box di benvenuto stile Claude Code: pannello arrotondato compatto.
-        # Il polpo è il marchio e resta — in formato mini (6 righe), tracciato
-        # dal logo pixel-art: occhi, prompt `>_` e tentacoli.
+        # Il polpo è IL LOGO — non si modifica: pixel-art originale dal marchio.
         octopus = [
-            "  ███████████",
-            "  ██▄████████",
-            "  ██▀█████▀██",
-            "█▄██▄█████▄██▄█",
-            "  ██▀ ███ ▀██",
-            "▀▀ ██  █  ██ ▀▀",
+            "   ███████████",
+            "   ██▄████████",
+            "   ██▀█████▀██",
+            "▄▄ ██▄█████▄██ ▄▄",
+            "██▄███████████▄██",
+            "    ██▀███▀██",
+            "██▄███ ███ ███▄██",
+            "▀▀▀▀▀  ▀▀▀  ▀▀▀▀▀",
         ]
         octo = Text()
         for i, line in enumerate(octopus):
             octo.append(("\n" if i else "") + line, style=BRAND)
 
         info = Text()
+        info.append("\n")  # centra le info rispetto al polpo
         info.append("✳ Welcome to ", style=f"bold {BRAND}")
         info.append("open", style="bold white")
         info.append("vurp", style=f"bold {BRAND}")
