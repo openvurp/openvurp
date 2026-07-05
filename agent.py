@@ -30,8 +30,8 @@ OPENVURP_DIR = os.path.dirname(os.path.abspath(__file__))
 MEMORY_DIR = os.path.join(OPENVURP_DIR, "memory")
 SKILLS_DIR = os.path.join(OPENVURP_DIR, "skills")
 
-ACCENT = "cyan"
 BRAND = "#e8654a"  # arancione openvurp (dal logo)
+ACCENT = BRAND     # accento unico stile Claude Code: il nostro arancione
 DIM = "bright_black"
 BULLET = "⏺"
 ELBOW = "⎿"
@@ -173,38 +173,43 @@ class UI:
         self._model = model
         self._backend = backend
 
-        # Polpo openvurp — tracciato dal logo (pixel-art) e compattato a
-        # mezzi-blocchi: metà altezza, stessa silhouette. Tutto arancione.
+        # Box di benvenuto stile Claude Code: pannello arrotondato compatto.
+        # Il polpo è il marchio e resta — in formato mini (6 righe), tracciato
+        # dal logo pixel-art: occhi, prompt `>_` e tentacoli.
         octopus = [
-            "   ███████████",
-            "   ██▄████████",
-            "   ██▀█████▀██",
-            "▄▄ ██▄█████▄██ ▄▄",
-            "██▄███████████▄██",
-            "    ██▀███▀██",
-            "██▄███ ███ ███▄██",
-            "▀▀▀▀▀  ▀▀▀  ▀▀▀▀▀",
+            "  ███████████",
+            "  ██▄████████",
+            "  ██▀█████▀██",
+            "█▄██▄█████▄██▄█",
+            "  ██▀ ███ ▀██",
+            "▀▀ ██  █  ██ ▀▀",
         ]
         octo = Text()
-        for line in octopus:
-            octo.append(line + "\n", style=BRAND)
+        for i, line in enumerate(octopus):
+            octo.append(("\n" if i else "") + line, style=BRAND)
 
         info = Text()
-        info.append("\n\n")  # centra il marchio rispetto al polpo
+        info.append("✳ Welcome to ", style=f"bold {BRAND}")
         info.append("open", style="bold white")
         info.append("vurp", style=f"bold {BRAND}")
-        info.append("   the octopus agent\n\n", style="dim")
-        info.append(f"{model} · {backend}\n", style="dim")
-        info.append(f"{OPENVURP_DIR}", style="dim")
+        info.append("!\n\n", style=f"bold {BRAND}")
+        info.append("  /", style=ACCENT)
+        info.append(" for commands · ", style="dim")
+        info.append("/setup", style=ACCENT)
+        info.append(" to reconfigure\n\n", style="dim")
+        info.append(f"  model: {model} · {backend}\n", style="dim")
+        info.append(f"  cwd:   {OPENVURP_DIR}", style="dim")
 
-        grid = Table.grid(padding=(0, 3))
+        grid = Table.grid(padding=(0, 2))
         grid.add_column()
         grid.add_column()
         grid.add_row(octo, info)
 
         self.console.print()
-        self.console.print(grid)
-        self.console.print(f"  [{DIM}]type [/{DIM}][{ACCENT}]/[/{ACCENT}][{DIM}] for commands[/{DIM}]")
+        self.console.print(Panel(
+            grid, border_style=BRAND, box=box.ROUNDED,
+            padding=(0, 1), expand=False,
+        ))
 
     def goodbye(self):
         self.console.print(f"\n  [dim]{GLYPH} See you![/dim]\n")
@@ -241,11 +246,13 @@ class UI:
         c = "\033[38;5;240m"
         r = "\033[0m"
         status = self._status_visible(context_pct)
-        pad = max(cols - len(status) - 3, 2)
-        # Header con status (niente bottom_toolbar: ancorava la barra in basso
-        # riservando righe vuote \u2192 era quello il gap). Box compatto: bordo sopra
-        # + riga input. Il menu `/` compare solo quando digiti.
-        top = f"{c}\u256d\u2500{status}{'\u2500' * pad}{r}"
+        pad = max(cols - len(status) - 4, 2)
+        # Box stile Claude Code: bordo sopra con angoli arrotondati, riga di
+        # input, bordo di chiusura dopo l'invio. Status nel bordo alto (niente
+        # bottom_toolbar: ancorava la barra in basso riservando righe vuote).
+        # Il menu `/` compare solo quando digiti.
+        top = f"{c}\u256d\u2500{status}{'\u2500' * pad}\u256e{r}"
+        bottom = f"{c}\u2570{'\u2500' * max(cols - 2, 2)}\u256f{r}"
 
         sys.stdout.write("\n" + top + "\n")
         sys.stdout.flush()
@@ -259,16 +266,18 @@ class UI:
             result = "/exit"
         except KeyboardInterrupt:
             result = ""
+        sys.stdout.write(bottom + "\n")
+        sys.stdout.flush()
         return result or ""
 
     def _prompt_legacy(self, context_pct: int = 0) -> str:
-        """Fallback senza prompt_toolkit: header + input() semplice."""
+        """Fallback senza prompt_toolkit: box semplice + input()."""
         cols = shutil.get_terminal_size((80, 24)).columns
         c = "\033[38;5;240m"
         r = "\033[0m"
         status = self._status_visible(context_pct)
-        pad = max(cols - len(status) - 3, 2)
-        sys.stdout.write(f"\n{c}\u256d\u2500{status}{'\u2500' * pad}{r}\n")
+        pad = max(cols - len(status) - 4, 2)
+        sys.stdout.write(f"\n{c}\u256d\u2500{status}{'\u2500' * pad}\u256e{r}\n")
         sys.stdout.flush()
         self._at_prompt = True
         try:
@@ -277,6 +286,8 @@ class UI:
             result = "/exit"
         finally:
             self._at_prompt = False
+        sys.stdout.write(f"{c}\u2570{'\u2500' * max(cols - 2, 2)}\u256f{r}\n")
+        sys.stdout.flush()
         self.flush_notes()
         return result
 

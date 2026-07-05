@@ -1143,16 +1143,22 @@ def main():
     # Gira prima di tutto, in terminale normale. Saltato in headless (Docker usa
     # le variabili d'ambiente del container).
     if not args.headless and (os.isatty(0) and os.isatty(1)):
+        from core.setup_wizard import needs_setup, run_wizard
         try:
-            from core.setup_wizard import run_wizard
             # Parte su `openvurp` (senza --setup) SOLO se manca la config (prima
             # volta). Se hai già configurato, non compare nulla. `--setup` lo
             # forza a mano quando vuoi riconfigurare.
             run_wizard(force=getattr(args, "setup", False))
-        except KeyboardInterrupt:
-            return
+        except (KeyboardInterrupt, EOFError):
+            print()
         except Exception as exc:
-            print(f"[setup saltato: {exc}]")
+            print(f"[setup interrotto: {exc}]")
+        # Da zero il setup è un REQUISITO: se manca ancora la configurazione
+        # minima (wizard abbandonato o fallito) non svegliamo un agente a metà.
+        if needs_setup():
+            print("Configurazione incompleta — l'agente non parte senza. "
+                  "Rilancia `openvurp` per rifare il setup.")
+            return
 
     # Abilita readline: editing della riga, storia e — importante — incollaggio
     # multilinea (bracketed paste) senza che ogni newline venga inviato a parte.
