@@ -2,6 +2,12 @@
   <img src="openvurp.jpg" alt="openvurp" width="500"/>
 </p>
 
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e8654a" alt="MIT license"/></a>
+  <img src="https://img.shields.io/badge/python-3.10+-e8654a" alt="Python 3.10+"/>
+  <img src="https://img.shields.io/badge/local--first-ollama-e8654a" alt="local-first"/>
+</p>
+
 **A personal AI agent that is born, grows with you, and can prove it.**
 
 Most agent frameworks give you a chatbot with tools and a markdown file that tells it who to be. openvurp is built around a different idea: identity and competence are not configuration — they are **earned, versioned, and verifiable**.
@@ -15,9 +21,9 @@ Your agent is *born* in a first conversation. It learns who you are by living wi
 
 ⏺ Done. All green.
 
-╭──────────────────────────────────────────────────╮
+╭─ qwen3-coder · ollama · ctx 12% ─────────────────╮
 │ > _
-╰─ qwen3-coder · ollama · ctx 12% ─────────────────╯
+╰──────────────────────────────────────────────────╯
 ```
 
 ## Why openvurp?
@@ -41,6 +47,7 @@ I chose this name as a tribute to my hometown, Taranto, and its strong connectio
 | **Capabilities** | A fixed toolset | **The Forge**: when a task exceeds its tools the agent builds a new one — scaffold, test, then promote to a reusable plugin, with the lifecycle enforced by the runtime |
 | **Awareness** | Idle until you type | **Senses**: it watches folders, files, web pages and RSS feeds between heartbeats; a change becomes an observation linked to a project or a curiosity |
 | **Scale** | One model does everything | **Subagents + model router**: an orchestrator delegates to real worker processes (kill/timeout-safe) and routes heavy work to cloud, light work local; **MCP** servers add remote tools |
+| **Outages** | Crashes silently, you notice hours later | **Sentinel**: notices when internet, Ollama or Telegram go down *and when they come back* — tells you, re-attaches Telegram by itself, and resumes suspended work on recovery |
 | **Mistakes** | Restart and lose everything | **Reset & rebirth**: every reset auto-backs-up memory, identity, anima and code — one command returns the agent exactly as it was |
 
 ## The life cycle
@@ -58,12 +65,12 @@ I chose this name as a tribute to my hometown, Taranto, and its strong connectio
 ## Quick start
 
 ```bash
-git clone https://github.com/JustVugg/openvurp && cd openvurp
+git clone https://github.com/openvurp/openvurp && cd openvurp
 python3 -m pip install -e ".[dev]"
-openvurp                      # guided setup (no .env to edit) → full-screen TUI
+openvurp                      # first run: guided setup → the agent is born
 ```
 
-First launch runs a **guided setup wizard** — pick backend, model and (optionally) paste a Telegram token; it writes `.env` for you, then starts. `openvurp` opens the rich CLI on a clean screen (keeps the terminal scrollback, so you can scroll up through the conversation) with the octopus banner — multiline paste, in-place self-update, and dashboard/Telegram. Useful commands: `/update` `/restart` `/dashboard`. Re-run setup anytime with `openvurp --setup`; `openvurp --doctor` checks the runtime. The agent **replies in whatever language you write in**. (The experimental curses TUI is still available as `openvurp-tui`.)
+First launch runs a **guided setup wizard** — pick backend, model and (optionally) paste a Telegram token; it writes `.env` for you, then the agent wakes up and the birth conversation begins. The setup is a requirement, not a suggestion: openvurp won't boot a half-configured agent. Once configured, `openvurp` starts straight into the CLI — clean screen, octopus banner, Claude-Code-style interface (`⏺` tool calls, streaming, slash-command menu on `/`), and the terminal scrollback stays usable. Useful commands: `/update` `/restart` `/dashboard`. Re-run setup anytime with `openvurp --setup`; `openvurp --doctor` checks the runtime. The agent **replies in whatever language you write in**. (The experimental curses TUI is still available as `openvurp-tui`.)
 
 ### Docker
 
@@ -74,6 +81,15 @@ docker compose exec openvurp sh          # a service shell
 ```
 
 The container runs **headless** (dashboard web chat + gateway + Telegram + heartbeat) and connects to Ollama on the host via `host.docker.internal`. Multiple agents run in parallel inside it (`subagent_spawn` — they run tools/tests, not just text); `memory/` is a named volume so identity and history persist across restarts. Configure via env vars in `docker-compose.yml` (or a `.env` next to it).
+
+### Always on
+
+```bash
+sudo bash scripts/install-service.sh   # systemd service: survives closed terminals and reboots
+journalctl -u openvurp -f              # follow the logs
+```
+
+The service runs openvurp headless (`Restart=always`): close every terminal, reboot the machine — the agent keeps living, reachable via Telegram and the web dashboard. The **sentinel** watches internet, the LLM backend and Telegram from inside: if something falls it tells you, and when it comes back it re-attaches on its own and wakes the agent to resume what was suspended.
 
 Backends: **Ollama** (default, local-first), **Anthropic**, **OpenAI**, **Groq**, or any OpenAI-compatible server. Set `LLM_BACKEND` and `LLM_MODEL` in `.env`. The runtime supports native tool calling on every backend, prompt caching (Anthropic), adaptive tool temperature, real token accounting, parallel read-only tool execution, and **MCP** servers for remote tools — out of the box.
 
@@ -95,7 +111,7 @@ Backends: **Ollama** (default, local-first), **Anthropic**, **OpenAI**, **Groq**
 | `/integrity [refresh]` | Verify code integrity against the baseline (or refresh it) |
 | `/voice \| /audio \| /mic` | Toggle voice replies, audio/transcription, or speak an input |
 | `/update` `/restart` | Self-update from git (safe fast-forward + smoke-test + rollback) and restart **in place** — the terminal/TUI stays open |
-| `/dashboard` | Start the local web dashboard — runtime status **and a chat panel** to talk to the agent from the browser (also `DASHBOARD_ENABLED=true`) |
+| `/dashboard` | Start the local web dashboard — a clean, ChatGPT-style chat with live activity from every channel (CLI/Telegram/heartbeat), plus runtime/memory/session panels (also `DASHBOARD_ENABLED=true`) |
 | `/memory` `/skills` `/doctor` `/trace` `/self` `/evolve` | Memory files, skills, runtime health, session trace, agent panel, self-evolution |
 
 When an action needs approval you get three answers: `s` (yes), `n` (no), `sempre` — *yes, and remember it for 8 hours*. Critical commands stay blocked in every mode.
@@ -106,7 +122,7 @@ There are two front-ends: the classic line CLI (`python3 main.py`) and an experi
 
 Set `TELEGRAM_TOKEN` and — important — **your own user ID** in `TELEGRAM_ALLOWED_USERS` (`.env`). IDs on that list are recognized as the owner and get full permissions; everyone else is a guest (chat only). If the list is empty, the console prints your ID on the first message so you can copy it. Photos, voice notes, and documents are handled natively.
 
-**In groups**, pick how it participates with `TELEGRAM_GROUP_MODE`: `mention` (default — replies only when @mentioned or replied to), `natural` (the agent decides on its own when to chime in, like a person, with a cooldown — set `TELEGRAM_GROUP_COOLDOWN`), or `all` (replies to everything). The agent answers in whatever language a message is written in.
+**In groups**, pick how it participates with `TELEGRAM_GROUP_MODE`: `mention` (default — replies only when @mentioned or replied to), `natural` (the agent decides on its own when to chime in, like a person, with a cooldown — set `TELEGRAM_GROUP_COOLDOWN`), or `all` (replies to everything). `TELEGRAM_GROUP_WHITELIST` restricts it to the group chats you list — anywhere else it stays silent. Group sessions never see the owner's private memory. The agent answers in whatever language a message is written in.
 
 ## Security model
 
@@ -138,10 +154,12 @@ Every reset backs up memory, identity, anima, logs **and code** first. After cod
 ```
 core/        agent loop + kernel, anima, growth, mirror, diary, dreaming,
              curiosity, projects, bonds, senses, forge, pacts, heartbeat,
-             learning, memory (+vector), privacy, safety, RBAC/audit/leases,
+             sentinel (outage watchdog + auto-recovery), learning,
+             memory (+vector), privacy, safety, RBAC/audit/leases,
              subagents, model router, MCP client, context, LLM client
 tools/       shell, file ops, search, web, browser, process, media, voice, notify…
 channels/    telegram (discord/slack/signal scaffolding)
+dashboard    web chat (ChatGPT-style) + live activity stream + runtime panels
 skills/      markdown skills loaded on demand
 plugins/     drop-in tool extensions
 memory/      everything the agent has lived: lessons, diary, dreams, journal
@@ -152,7 +170,7 @@ The agent's workspace files (`AGENTS.md`, `SOUL.md`, …) are reloaded from disk
 ## Development
 
 ```bash
-python3 -m pytest -q                 # 316 tests
+python3 -m pytest -q                 # 317+ tests
 python3 scripts/secret_scan.py       # before any push
 python3 reset.py --baseline-only     # after code changes
 ```
