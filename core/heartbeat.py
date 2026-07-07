@@ -124,6 +124,13 @@ class HeartbeatConfig:
     ack_max_chars: int = 24         # Ack banali sotto questa soglia vengono ignorati
     dedup_window_hours: int = 24    # Finestra deduplicazione
     checklist_file: str = "HEARTBEAT.md"  # File checklist nel workspace
+    # Battito a due livelli: i controlli meccanici (open loops, sensi, eventi)
+    # girano a ogni intervallo e costano zero token; l'LLM viene chiamato solo
+    # se lo stato è CAMBIATO dall'ultimo battito pieno, o comunque almeno ogni
+    # full_beat_every_seconds (la vita autonoma — curiosità, iniziativa — non
+    # deve dipendere solo dagli eventi).
+    idle_skip: bool = True
+    full_beat_every_seconds: int = 4 * 3600
 
     @classmethod
     def from_dict(cls, d: dict) -> "HeartbeatConfig":
@@ -144,6 +151,10 @@ class HeartbeatConfig:
             cfg.ack_max_chars = int(d["ack_max_chars"])
         if "dedup_window_hours" in d:
             cfg.dedup_window_hours = int(d["dedup_window_hours"])
+        if "idle_skip" in d:
+            cfg.idle_skip = bool(d["idle_skip"])
+        if "full_beat_every" in d:
+            cfg.full_beat_every_seconds = _parse_duration(d["full_beat_every"])
         return cfg
 
 
@@ -166,6 +177,10 @@ class HeartbeatRunner:
         self._event_queue: list[str] = []
         self._history: list[HeartbeatEvent] = []
         self._last_consolidated_day: str = ""
+        # Battito a due livelli: impronta dello stato all'ultimo battito
+        # pieno + quando è avvenuto. Stato identico ⇒ niente chiamata LLM.
+        self._last_state_fp: str = ""
+        self._last_full_beat_at: float = 0.0
 
         # Callbacks
         self._run_agent: Optional[Callable] = None   # Funzione che esegue l'agente
@@ -271,8 +286,31 @@ class HeartbeatRunner:
         try:
             self._maybe_consolidate_memory()
 
-            # Costruisci prompt
-            prompt = self._build_prompt()
+            # ── Battito a due livelli ──
+            # I controlli meccanici (open loops, sensi, fili, progetti…) girano
+            # sempre e costano zero token. L'LLM parte solo se c'è un motivo:
+            # eventi in coda, stato cambiato, trigger manuale, o è passato
+            # troppo tempo dall'ultimo battito pieno (vita autonoma garantita).
+            with self._lock:
+                has_events = bool(self._event_queue)
+            state = self._collect_live_state()
+            state_fp = hashlib.md5(state.encode("utf-8")).hexdigest()
+            full_due = (
+                time.time() - self._last_full_beat_at
+                >= self.config.full_beat_every_seconds
+            )
+            if (self.config.idle_skip and reason == "interval"
+                    and not has_events and not full_due
+                    and state_fp == self._last_state_fp):
+                self._emit(HeartbeatStatus.SKIPPED,
+                           reason="idle: nulla di nuovo (LLM non chiamato)")
+                self._schedule_next()
+                return
+
+            # Battito pieno: costruisci prompt (consuma la coda eventi)
+            prompt = self._build_prompt(state=state)
+            self._last_state_fp = state_fp
+            self._last_full_beat_at = time.time()
 
             # Esegui agente
             response = self._run_agent(prompt)
@@ -323,8 +361,12 @@ class HeartbeatRunner:
         # Programma prossimo
         self._schedule_next()
 
-    def _build_prompt(self) -> str:
-        """Costruisce il prompt per il heartbeat."""
+    def _build_prompt(self, state: str | None = None) -> str:
+        """Costruisce il prompt per il heartbeat.
+
+        `state` permette di riusare lo stato già raccolto dal chiamante
+        (il battito a due livelli lo calcola prima, per l'impronta).
+        """
         # Leggi checklist
         checklist = ""
         checklist_path = os.path.join(self.workspace_dir, self.config.checklist_file)
@@ -352,7 +394,8 @@ class HeartbeatRunner:
         if not events:
             events = "Nessun evento di sistema in coda."
 
-        state = self._collect_live_state()
+        if state is None:
+            state = self._collect_live_state()
 
         return HEARTBEAT_PROMPT.format(checklist=checklist, events=events, state=state)
 
