@@ -5,8 +5,8 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"/></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-3776ab" alt="Python 3.10+"/>
-  <img src="https://img.shields.io/badge/runs-fully%20offline-e8654a" alt="runs fully offline"/>
-  <img src="https://img.shields.io/badge/data-stays%20on%20your%20machine-6e7681" alt="local data"/>
+  <img src="https://img.shields.io/badge/engine-yours%20to%20choose-e8654a" alt="engine of your choice"/>
+  <img src="https://img.shields.io/badge/agents%20%26%20history-on%20your%20disk-6e7681" alt="agents and history on your disk"/>
 </p>
 
 # openvurp
@@ -18,7 +18,20 @@ commands on your computer, read and write files, search the web, drive a
 browser — and they know about each other, so one can ask a colleague instead of
 guessing.
 
-It runs on your own machine. Everything lives in `memory/` on your disk.
+openvurp runs on your computer and the agents live there: conversations,
+lessons and memory are files under `memory/`, yours to read and to delete.
+
+**The model is a separate choice, and it is yours.** It can run on your own
+hardware, or on somebody's servers — and that line does not follow the provider:
+Ollama serves local models and cloud ones alike, and the default here
+(`qwen3-coder-next:cloud`) is one of the cloud ones. What decides is the model
+you pick, not the name in front of it.
+
+Whatever you pick, its prompts go where that model runs, like with any other
+client. openvurp does not pretend otherwise: the engine is written next to every
+agent, and `PRIVACY_MODE` can keep private turns on a local model even when the
+main one is remote — a rule the runtime applies by reading the model name, so a
+`:cloud` model counts as cloud however it is served.
 
 ```bash
 git clone https://github.com/openvurp/openvurp && cd openvurp
@@ -122,9 +135,12 @@ service. Close the terminal, reboot: the agents are still there.
 
 Each agent runs on whichever you pick.
 
-- **Local models** — Ollama, or anything speaking the OpenAI API (LM Studio,
-  llama.cpp, vLLM, Jan, koboldcpp, Colibri). openvurp checks the usual local ports for
-  you: what answers shows up in Settings, models already listed.
+- **Servers you run yourself** — Ollama, or anything speaking the OpenAI API
+  (LM Studio, llama.cpp, vLLM, Jan, koboldcpp, Colibri). openvurp knocks on the
+  usual local ports: whatever answers shows up in Settings with its models
+  listed. Note that "your own server" is not the same as "your own hardware" —
+  Ollama also serves cloud models, marked `:cloud`, and those run on its
+  servers like any other remote model.
 - **Subscription CLIs** — `codex login` or `claude` run on the plan you already
   pay for. openvurp removes `OPENAI_API_KEY` from their environment so they can
   never quietly switch to paid API calls.
