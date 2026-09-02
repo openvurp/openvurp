@@ -112,3 +112,4 @@ channels/wa-bridge/package-lock.json
 BOOTSTRAP.md
 scripts/build_meridian.py
 meridian-preview.png
+make_buffett_report.py

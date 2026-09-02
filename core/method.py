@@ -25,6 +25,14 @@ def build_operating_method(snapshot: EnvironmentSnapshot, tool_names: list[str])
             "- Per modifiche nel workspace: preferisci `edit_file` per patch mirate; "
             "usa `write_file` per file nuovi o rewrite completi."
         )
+        lines.append(
+            "- Se il TUO motore ha una sandbox propria e ti dice che il "
+            "filesystem e' in sola lettura, e' una sua restrizione, non una "
+            "proprieta' della macchina: e' fatta apposta perche' ogni scrittura "
+            "passi da openvurp, con approvazione e registro. Usa `write_file` e "
+            "funziona. Non riportare mai un tuo limite come un limite del "
+            "sistema dell'utente."
+        )
 
     if "shell" in tools:
         shell_name = snapshot.preferred.get("shell") or snapshot.shell_name or "shell"

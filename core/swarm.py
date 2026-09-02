@@ -537,14 +537,14 @@ class Swarm:
             # Chi impara e' questo agente, non la piattaforma: le lezioni e
             # le correzioni finiscono nel SUO archivio. La chiave e' l'id e non
             # il nome, che l'owner puo' cambiare quando vuole.
-            from core import learning as _learning
-            token = _learning.set_scope(member.id)
+            from core import scope as _scope
+            token = _scope.set_scope(member.id)
             try:
                 out = str(parent._execute_tool(name, args or {}, source) or "")
             except Exception as exc:
                 out = f"[TOOL FALLITO] {exc}"
             finally:
-                _learning.reset_scope(token)
+                _scope.reset_scope(token)
             note(name, args, out)
             try:
                 return out
@@ -643,6 +643,24 @@ class Swarm:
         client.temperature = 0.4
         return client
 
+    def _memories(self, member: SwarmMember, prompt: str) -> str:
+        """Quello che QUESTO agente ha imparato, se e' pertinente."""
+        agent = self.agent
+        recupera = getattr(agent, "memory_for", None)
+        if recupera is None or not str(prompt or "").strip():
+            return ""
+        try:
+            import config as cfg
+            budget = max(500, int(getattr(cfg, "MEMORY_RETRIEVAL_CHARS", 3000)))
+            testo = recupera(member.id).get_relevant(
+                prompt, budget_chars=budget, session_type="main")
+        except Exception:
+            return ""
+        testo = str(testo or "").strip()
+        if not testo or testo.startswith("(nessun ricordo"):
+            return ""
+        return "Quello che hai imparato finora:\n" + testo
+
     def _system_prompt(self, member: SwarmMember, peers: list[SwarmMember]) -> str:
         others = ", ".join(f"{p.name} ({p.role})" for p in peers if p.id != member.id)
         lines = [
@@ -665,6 +683,13 @@ class Swarm:
             "the user sees it in a preview. The folder you run in is openvurp's "
             "home, not the subject: the context is what the user and your own "
             "instructions say."
+        )
+        # Il posto giusto per il discorso lungo e' la descrizione di
+        # `write_file`, dove il modello guarda quando deve scrivere. Qui sta
+        # solo il promemoria: il prompt ha un budget, e un regolamento lungo
+        # fa girare il modello attorno alle istruzioni invece che al lavoro.
+        lines.append(
+            "Never report your own limit as the user's."
         )
         lines.append(
             "Reply in the language the person writes to you in. Be concrete "
@@ -690,6 +715,14 @@ class Swarm:
                steps: list | None = None, persist: bool = True) -> str:
         peers = self.list_members()
         messages = [{"role": "system", "content": self._system_prompt(member, peers)}]
+
+        # I ricordi di questo agente, non quelli di tutti. Finora nessun agente
+        # rileggeva niente: `remember` scriveva in un archivio comune che solo
+        # la piattaforma consultava. Un cassetto in cui si buttava e basta.
+        ricordi = self._memories(member, prompt)
+        if ricordi:
+            messages.append({"role": "system", "content": ricordi})
+
         if context.strip():
             messages.append({
                 "role": "user",

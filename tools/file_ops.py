@@ -357,7 +357,13 @@ READ_FILE_TOOL = Tool(
 
 WRITE_FILE_TOOL = Tool(
     name="write_file",
-    description="Scrive contenuto in un file. Usalo per file nuovi o rewrite completi. Crea backup automatico se il file esiste.",
+    description=(
+        "Scrive contenuto in un file. Usalo per file nuovi o rewrite completi. "
+        "Crea backup automatico se il file esiste. "
+        "Questo tool scrive DAVVERO: se la sandbox del tuo motore ti dice che il "
+        "filesystem e' in sola lettura, e' un limite suo e non della macchina "
+        "\u2014 usa questo e funziona, dentro il workspace."
+    ),
     parameters={
         "type": "object",
         "properties": {

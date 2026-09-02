@@ -1453,10 +1453,33 @@ class Agent:
             return ToolResult(success=False, output="",
                               error=f"Seconda opinione non disponibile: {e}")
 
+    def memory_for(self, scope: str = ""):
+        """I ricordi di chi sta lavorando adesso.
+
+        Aprire un archivio semantico costa (SQLite, e a volte gli embedding):
+        si tiene aperto uno per agente, non uno per chiamata.
+        """
+        scope = str(scope or "")
+        if not scope:
+            return self.memory
+        cache = getattr(self, "_memory_by_scope", None)
+        if cache is None:
+            cache = self._memory_by_scope = {}
+        if scope not in cache:
+            try:
+                cache[scope] = MemoryManager(MEMORY_DIR, scope=scope)
+            except Exception:
+                cache[scope] = self.memory
+        return cache[scope]
+
     def _remember_handler(self, content: str = "", category: str = "general") -> ToolResult:
         if not (content or "").strip():
             return ToolResult(success=False, output="", error="content vuoto")
-        ok = self.memory.remember(content, category=category or "general")
+        # Il ricordo e' di chi lo salva: se lo sta salvando un agente della
+        # rubrica, va nel suo archivio, non in quello di tutti.
+        from core.scope import current_scope
+        ok = self.memory_for(current_scope()).remember(
+            content, category=category or "general")
         if ok:
             return ToolResult(success=True, output=f"Ricordo salvato ({category or 'general'}).")
         return ToolResult(

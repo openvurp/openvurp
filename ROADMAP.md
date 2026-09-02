@@ -54,8 +54,14 @@ decision is what most of the sections below now hang from.
 - done: semantic memory for stable facts (SQLite FTS5 + optional embeddings)
 - done: hybrid retrieval — keyword plus vector
 - done: fading — memories never recalled quietly archive, reversibly
-- per-agent memory: today the store is shared, the way lessons used to be
-- a backup you can actually run: `memory/` has no safety net since `reset.py` went
+- done: **per agent** — `memory/agents/<id>/`, and an agent now reads its own
+  memories back; before, `remember` wrote into a shared store that only the
+  platform ever consulted
+- **`memory/uploads` is not program state.** Everything else under `memory/` can
+  be rebuilt — conversations happen again, lessons are learned again. The files
+  you sent the agents cannot. No automatic backup is planned (a machine that
+  runs forever to protect rebuildable things is not worth its keep), but an
+  export you press when you want one is
 
 ## 6. Always on
 

@@ -8,7 +8,6 @@ promossi in una lezione stabile.
 
 from __future__ import annotations
 
-import contextvars
 import hashlib
 import json
 import os
@@ -72,42 +71,11 @@ class LearningReviewReport:
         return "\n".join(lines)
 
 
-# Chi sta imparando, in questo momento, su questo filo di esecuzione.
-#
-# Le lezioni erano di tutti: un unico archivio in memory/learning, scritto da
-# qualunque agente chiamasse learning_feedback. Cosi' una correzione data a chi
-# cerca offerte finiva nel bagaglio di chi scrive codice — e nessuna delle due
-# era piu' verificabile, perche' non si sapeva a chi appartenesse.
-#
-# Una variabile di contesto e non un attributo: gli agenti girano anche in
-# parallelo (broadcast usa un pool di thread), e un attributo condiviso
-# verrebbe sovrascritto dal collega che parte un istante dopo.
-_SCOPE: contextvars.ContextVar = contextvars.ContextVar("learning_scope", default="")
-
-
-def set_scope(scope: str):
-    """Da qui in avanti si impara per conto di questo agente."""
-    return _SCOPE.set(str(scope or ""))
-
-
-def reset_scope(token) -> None:
-    _SCOPE.reset(token)
-
-
-def current_scope() -> str:
-    return _SCOPE.get()
-
-
-def scoped_dir(memory_dir: str, name: str, scope: str = "") -> str:
-    """La cartella di un archivio, dell'agente o della piattaforma.
-
-    Senza scope resta dov'era (memory/<name>): la piattaforma non trasloca, e
-    quello che c'e' gia' sul disco continua a leggersi.
-    """
-    scope = str(scope or "").strip()
-    if not scope:
-        return os.path.join(memory_dir, name)
-    return os.path.join(memory_dir, "agents", scope, name)
+# Lo scope vive in core/scope.py: lo condividono le lezioni, lo specchio e la
+# memoria, che avevano tutti lo stesso difetto di essere in comune.
+from core.scope import (  # noqa: F401  (rieportati: erano importati da qui)
+    current_scope, reset_scope, scoped_dir, set_scope,
+)
 
 
 class LearningLoop:

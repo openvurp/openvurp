@@ -166,16 +166,39 @@ class VectorMemory:
         self.db.commit()
         return mem_id
 
+    @staticmethod
+    def _fts_query(query: str) -> str:
+        """La domanda, tradotta in qualcosa che FTS5 possa davvero trovare.
+
+        FTS5 mette in AND le parole: `MATCH 'Crucial SSD prezzo'` pretende che
+        il ricordo contenga tutte e tre. Una domanda in lingua non ha quasi mai
+        tutte le parole del ricordo, quindi la ricerca tornava vuota quasi
+        sempre — e `remember` continuava a rispondere «salvato» per una cosa che
+        poi nessuno ritrovava.
+
+        In OR invece basta una parola in comune, e il punteggio (bm25) mette
+        avanti chi ne ha di piu'. Le virgolette servono anche a un altro
+        guasto: un apostrofo nella domanda faceva esplodere la sintassi FTS5,
+        l'errore veniva ingoiato, e il risultato era di nuovo zero ricordi.
+        """
+        import re
+        parole = [p for p in re.findall(r"\w+", str(query or ""), re.UNICODE)
+                  if len(p) > 2]
+        if not parole:
+            return ""
+        return " OR ".join(f'"{p}"' for p in parole[:12])
+
     def search(self, query: str, top_k: int = 5, min_score: float = 0.3) -> list[dict]:
         """Ricerca ibrida: vector similarity + FTS5 + temporal decay."""
         results = {}
 
         # 1. FTS5 keyword search
         try:
+            fts_query = self._fts_query(query)
             fts_rows = self.db.execute(
                 "SELECT rowid, rank FROM memories_fts WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?",
-                (query, top_k * 2)
-            ).fetchall()
+                (fts_query, top_k * 2)
+            ).fetchall() if fts_query else []
 
             if fts_rows:
                 # FTS5 bm25 rank è negativo: più negativo = match migliore,

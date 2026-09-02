@@ -14,7 +14,22 @@ from typing import Optional
 
 
 class MemoryManager:
-    def __init__(self, base_dir: str):
+    """I ricordi. Della piattaforma, oppure di un agente.
+
+    Erano di tutti: un archivio solo, in cui scriveva chiunque chiamasse
+    `remember`. Cosi' quello che amanda imparava sui prezzi finiva nello stesso
+    posto di quello che dev sapeva sul codice — e nessuno dei due lo rileggeva
+    mai, perche' la memoria la consultava solo la piattaforma. Un cassetto in
+    cui si buttava e basta.
+
+    Con uno `scope` (l'id dell'agente) ogni agente ha i suoi, in
+    memory/agents/<id>/. Senza scope resta dov'era: la piattaforma non trasloca.
+    """
+
+    def __init__(self, base_dir: str, scope: str = ""):
+        from core.scope import agent_home
+        self.scope = str(scope or "")
+        base_dir = agent_home(base_dir, self.scope)
         self.base_dir = base_dir
         os.makedirs(base_dir, exist_ok=True)
         os.makedirs(os.path.join(base_dir, "lessons"), exist_ok=True)
