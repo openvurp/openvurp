@@ -10,7 +10,7 @@ Avvia main.py come sottoprocesso e lo riavvia quando:
 
 Uso:
     python watcher.py              # Avvia openvurp con auto-restart
-    python watcher.py --no-telegram  # Passa argomenti a main.py
+    python watcher.py --cli          # Passa argomenti a main.py
 """
 
 import os
@@ -49,7 +49,7 @@ IGNORE_PATTERNS = {
 # File .md del workspace — riletti ogni turno, non serve riavviare
 WORKSPACE_MD_FILES = {
     "SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md",
-    "TOOLS.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md",
+    "TOOLS.md", "MEMORY.md", "HEARTBEAT.md",
 }
 
 # Tempo minimo tra riavvii (evita loop infiniti)

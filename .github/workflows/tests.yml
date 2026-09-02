@@ -1,0 +1,32 @@
+# 443 test che nessuno eseguiva su una pull request. Senza questo, chi manda
+# una modifica non sa di aver rotto qualcosa finche' non se ne accorge tu.
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" || pip install -e .
+          pip install pytest
+      - name: Test
+        # Nessuna chiave in CI: i test non devono mai chiamare un modello vero.
+        env:
+          OPENVURP_OFFLINE_TESTS: "1"
+        run: python -m pytest tests/ -q

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openvurp"
-version = "4.0.0"
+version = "5.0.0"
 description = "openvurp — a personal AI agent that is born, grows with you, and can prove it."
 readme = "README.md"
 license = {text = "MIT"}

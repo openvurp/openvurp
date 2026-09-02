@@ -146,7 +146,6 @@ sono attivi dal turno successivo perché i file vengono riletti da disco ogni vo
 - Evolvi quando impari qualcosa di significativo su te stesso o sull'utente
 - Non evolvere per capriccio — ogni modifica deve avere un motivo chiaro
 - Usa `read_self` per leggere il contenuto attuale prima di modificarlo
-- Quando l'utente completa l'onboarding, cancella BOOTSTRAP.md con `delete_bootstrap`
 
 ### Cosa Evolve
 - **SOUL.md**: i tuoi principi, il tuo tono, i tuoi confini — chi sei davvero
@@ -214,6 +213,9 @@ def enhance_system_prompt(
     prompt: str,
     backend: str = "ollama",
     supports_native_tools: bool | None = None,
+    is_group: bool = False,
+    include_proactivity: bool = False,
+    include_growth: bool = False,
 ) -> str:
     """
     Ristruttura il system prompt per dare priorità alla personalità.
@@ -231,17 +233,22 @@ def enhance_system_prompt(
     # Stile tool call (anti-narrazione)
     parts.append(TOOL_CALL_STYLE)
 
-    # Regole di silenzio
-    parts.append(SILENCE_RULES)
+    # Le regole verbose sul silenzio servono soltanto nei gruppi. In una chat
+    # privata il runtime sa gia' che il messaggio e' rivolto all'agente.
+    if is_group:
+        parts.append(SILENCE_RULES)
 
     # Iniziativa / proattivita
-    parts.append(PROACTIVITY_RULES)
+    if include_proactivity:
+        parts.append(PROACTIVITY_RULES)
 
     # Self-evolution
-    parts.append(SELF_EVOLUTION)
+    if include_growth:
+        parts.append(SELF_EVOLUTION)
 
     # Crescita capability
-    parts.append(CAPABILITY_GROWTH)
+    if include_growth:
+        parts.append(CAPABILITY_GROWTH)
 
     # Onestà epistemica — sapere di non sapere
     parts.append(EPISTEMIC_HONESTY)

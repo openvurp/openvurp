@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import json
 from datetime import datetime
+import uuid
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
@@ -43,7 +44,7 @@ class TokenUsage:
 
 class Session:
     def __init__(self, session_dir: str = ""):
-        self.id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.id = datetime.now().strftime("%Y%m%d_%H%M%S_%f") + "_" + uuid.uuid4().hex[:6]
         self.started_at = datetime.now()
         self.messages: list[dict] = []
         self.tool_history: list[dict] = []
@@ -102,8 +103,10 @@ class Session:
             "conversation": self._full_conversation(),
         }
 
-        with open(path, "w", encoding="utf-8") as f:
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
 
     def summary(self) -> dict:
         """Riassunto sessione corrente."""

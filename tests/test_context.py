@@ -82,6 +82,26 @@ def test_budget_check():
     assert not budget["needs_compaction"]
 
 
+def test_budget_includes_tool_schema():
+    cm = ContextManager(".", "memory", "skills", max_tokens=1000)
+    schema = [{"type": "function", "function": {"name": "large", "description": "x" * 8000}}]
+    budget = cm.check_budget([{"role": "user", "content": "ciao"}], schema)
+    assert budget["tool_schema_tokens"] >= 1900
+    assert budget["over_budget"]
+
+
+def test_prune_to_economic_target_keeps_recent_turns():
+    cm = ContextManager(".", "memory", "skills", max_tokens=64000)
+    messages = [{"role": "system", "content": "s" * 4000}]
+    for index in range(20):
+        messages.append({"role": "user", "content": f"domanda {index} " + "x" * 1200})
+        messages.append({"role": "assistant", "content": f"risposta {index} " + "y" * 1200})
+    pruned = cm.prune_to_target(messages, target_tokens=3000)
+    assert len(pruned) < len(messages)
+    assert any("risposta 19" in m.get("content", "") for m in pruned)
+    assert sum(len(m.get("content", "")) for m in pruned) <= 12000
+
+
 def test_overflow_detection():
     """Rileva errori di context overflow."""
     assert ContextManager.is_context_overflow_error(

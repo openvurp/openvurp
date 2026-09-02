@@ -48,6 +48,7 @@ from core.security.capability_lease import CapabilityLeaseManager
 from core.runtime_gateway import RuntimeGateway
 from core.session_routing import SessionRoute
 from core.session_store import SessionStore
+from core.tool_router import ToolRouter
 
 # Import tool definitions
 from tools.shell import SHELL_TOOL
@@ -60,7 +61,7 @@ from tools.process import (
     PROCESS_READ_TOOL, PROCESS_WRITE_TOOL, PROCESS_STOP_TOOL,
     PROCESS_KILL_TOOL,
 )
-from tools.notify import NOTIFY_TOOL, NOTIFY_VOICE_TOOL, NOTIFY_FILE_TOOL, NOTIFY_PHOTO_TOOL
+from tools.notify import NOTIFY_TOOL, NOTIFY_VOICE_TOOL, NOTIFY_FILE_TOOL, NOTIFY_PHOTO_TOOL, NOTIFY_POLL_TOOL
 from tools.scheduler import SCHEDULE_NOTIFY_TOOL, LIST_SCHEDULE_TOOL, CANCEL_SCHEDULE_TOOL
 from tools.media import IMAGE_TOOL, AUDIO_TRANSCRIBE_TOOL, PDF_TOOL
 from tools.desktop import DESKTOP_SCREENSHOT_TOOL
@@ -81,7 +82,7 @@ from tools.journal import (
 from tools.plugins import SCAFFOLD_PLUGIN_TOOL
 
 # Self-evolution tools
-from tools.evolve import EVOLVE_SELF_TOOL, READ_SELF_TOOL, DELETE_BOOTSTRAP_TOOL
+from tools.evolve import EVOLVE_SELF_TOOL, READ_SELF_TOOL
 
 # Voice tools (opzionale)
 try:
@@ -151,6 +152,8 @@ class Agent:
         self._register_tools()
         self._builtin_tool_names = set(self.tools.names())
         self._plugin_tool_names: set[str] = set()
+        self.tool_router = ToolRouter()
+        self._active_tool_names = set(self.tool_router.selection.names)
 
         # Safety
         self.safety = SafetyGuard(openvurp_dir=OPENVURP_DIR)
@@ -192,6 +195,8 @@ class Agent:
         self.journal = TaskJournal(MEMORY_DIR)
         self.agent_state = AgentStateMachine(MEMORY_DIR)
         self.continuity = ContinuityPromptBuilder(self.agent_state, self.journal)
+        self._default_agent_state = self.agent_state
+        self._route_agent_states: dict[str, AgentStateMachine] = {}
         self.rbac = RBAC(MEMORY_DIR)
         self.gateway = RuntimeGateway(OPENVURP_DIR)
         self.session_store = SessionStore(MEMORY_DIR)
@@ -250,6 +255,13 @@ class Agent:
         self._privacy_llm = None  # lazy
         self._privacy_warned = False
         self._deep_llm = None  # lazy: modello profondo per escalation
+        self._override_llms: dict[tuple[str, str], LLMClient] = {}
+        self._last_llm_route = {
+            "backend": self.llm.backend,
+            "model": self.llm.model,
+            "strategy": "default",
+            "reason": "",
+        }
 
         # Cache LLM
         try:
@@ -263,6 +275,23 @@ class Agent:
 
         # Subagent
         self.subagent_mgr = SubagentManager(self)
+
+        # Sciame: specialisti persistenti che l'agente convoca da solo quando
+        # ha un dubbio. Se non parte, l'agente resta pienamente funzionante.
+        self.swarm = None
+        try:
+            import config as cfg
+            swarm_on = bool(getattr(cfg, "SWARM_ENABLED", True))
+        except Exception:
+            swarm_on = True
+        if swarm_on:
+            try:
+                from core.swarm import Swarm
+                # Stesso archivio della rubrica in dashboard: un solo elenco
+                # di agenti per CLI, tool, Telegram e web.
+                self.swarm = Swarm(self, memory_dir=MEMORY_DIR)
+            except Exception:
+                self.swarm = None
 
         # Plugin system
         self.plugin_mgr = PluginManager(PLUGINS_DIR)
@@ -332,6 +361,16 @@ class Agent:
         except Exception:
             self.bonds = None
 
+        # vurpub: il bancone condiviso (registry privato di skill/soluzioni).
+        # Registra i tool QUI, dopo che self.tools esiste e self.vurpub è pronto
+        # (_register_tools gira prima di questo punto).
+        try:
+            from core.vurpub import Vurpub
+            self.vurpub = Vurpub(OPENVURP_DIR)
+            self._register_vurpub_tools()
+        except Exception:
+            self.vurpub = None
+
         # Sorgente del turno corrente (cli/telegram/heartbeat/...): serve ai
         # tool che si comportano diversamente nei cicli autonomi.
         self._current_tool_source = "cli"
@@ -391,6 +430,16 @@ class Agent:
             sessions_dir = os.path.join(MEMORY_DIR, "sessions")
             self._route_runtime_sessions[route.session_key] = Session(session_dir=sessions_dir)
         return self._route_runtime_sessions[route.session_key]
+
+    def _agent_state_for_route(self, route: SessionRoute) -> AgentStateMachine:
+        """Isola goal e stato operativo tra chat/canali differenti."""
+        if route.source == "cli" and route.session_key == "cli:main":
+            return self._default_agent_state
+        state = self._route_agent_states.get(route.session_key)
+        if state is None:
+            state = AgentStateMachine(MEMORY_DIR, scope_key=route.session_key)
+            self._route_agent_states[route.session_key] = state
+        return state
 
     def _check_integrity(self):
         """Verifica integrità del codice core all'avvio.
@@ -522,6 +571,65 @@ class Agent:
             return self._deep_llm, f"escalation: {decision.reason}"
         except Exception:
             return self.llm, ""
+
+    def _configured_llm(self, backend: str, model: str) -> LLMClient:
+        """Client riusabile scelto esplicitamente da una chat/stanza."""
+        requested_backend = (backend or self.llm.backend).strip().lower()
+        requested_model = (model or "").strip()
+        key = (requested_backend, requested_model)
+        client = self._override_llms.get(key)
+        if client is None:
+            client = create_llm_client(
+                backend=requested_backend, model=requested_model,
+            )
+            self._override_llms[key] = client
+        return client
+
+    def _automatic_llm(self, user_input: str, session_type: str):
+        """Router economico a costo zero per la chat principale.
+
+        La scelta avviene con euristiche locali. Il privacy router viene
+        applicato dopo la scelta, usando il backend candidato reale.
+        """
+        import config as cfg
+        from core.model_router import route_chat_prompt
+
+        choice = route_chat_prompt(user_input)
+        backend, model = choice.backend, choice.model
+        reason = choice.reason
+        strategy = choice.strategy
+
+        try:
+            from core.privacy import decide, resolve_local_model
+
+            privacy = decide(
+                mode=str(getattr(cfg, "PRIVACY_MODE", "off") or "off"),
+                session_type=session_type,
+                user_input=user_input,
+                main_backend=backend,
+                main_model=model,
+            )
+            if privacy.route_local:
+                local_backend, local_model = resolve_local_model()
+                if local_backend and local_model:
+                    backend, model = local_backend, local_model
+                    reason = f"privacy: {privacy.reason}"
+                    strategy = "automatic_privacy_local"
+                else:
+                    self.ui.status(
+                        "[privacy: nessun modello locale disponibile; "
+                        "mantengo il motore automatico]"
+                    )
+        except Exception:
+            pass
+
+        client = self._configured_llm(backend, model)
+        return client, {
+            "backend": client.backend,
+            "model": client.model,
+            "strategy": strategy,
+            "reason": reason,
+        }
 
     def _register_tools(self):
         """Registra tutti i tool disponibili."""
@@ -672,26 +780,39 @@ class Agent:
             },
             handler=self._sense_handler,
         ))
+        # Only offered when there is actually a second model to ask. Before,
+        # the tool was always in the box and always failed with "configure
+        # ESCALATION_DEEP_BACKEND": the agent spent a turn discovering that a
+        # tool it had been handed does not work. A tool that cannot work
+        # should not be on the list.
+        from core.escalation import resolve_deep_model
+        if all(resolve_deep_model()):
+            self._register_second_opinion()
+        self._register_remaining_tools()
+
+    def _register_second_opinion(self) -> None:
         self.tools.register(Tool(
             name="second_opinion",
             description=(
-                "Chiede un parere indipendente a un modello diverso (quello "
-                "profondo) PRIMA di rispondere su cose che contano: decisioni "
-                "importanti, architettura, sicurezza, soldi. Usalo quando il "
-                "costo di sbagliare è alto o quando l'owner merita più di una "
-                "prospettiva. Riporta sempre se la seconda opinione diverge "
-                "dalla tua."
+                "Asks an independent opinion of a different (deeper) model "
+                "BEFORE answering on things that matter: important decisions, "
+                "architecture, security, money. Use it when the cost of being "
+                "wrong is high, or when the owner deserves more than one "
+                "perspective. Always report it when the second opinion "
+                "disagrees with yours."
             ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "question": {"type": "string", "description": "La domanda, formulata in modo neutro (senza suggerire la risposta)."},
-                    "context": {"type": "string", "description": "Contesto essenziale perché il parere sia informato."},
+                    "question": {"type": "string", "description": "The question, put neutrally (without hinting at the answer)."},
+                    "context": {"type": "string", "description": "The context needed for the opinion to be informed."},
                 },
                 "required": ["question"],
             },
             handler=self._second_opinion_handler,
         ))
+
+    def _register_remaining_tools(self) -> None:
         self.tools.register(Tool(
             name="follow_up",
             description=(
@@ -837,6 +958,27 @@ class Agent:
                 "required": ["name"],
             },
             handler=self._load_skill_handler,
+        ))
+        self.tools.register(Tool(
+            name="load_toolset",
+            description=(
+                "Attiva altri pacchetti di tool per il turno corrente quando il "
+                "tool necessario non e' gia' disponibile. Pacchetti: files, web, "
+                "memory, communication, runtime, agents, marketplace, all. Passa solo quelli "
+                "necessari: gli schemi aggiuntivi aumentano i token di input."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "packs": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Uno o piu' pacchetti da attivare.",
+                    },
+                },
+                "required": ["packs"],
+            },
+            handler=self._load_toolset_handler,
         ))
         self.tools.register(Tool(
             name="doctor",
@@ -1011,6 +1153,7 @@ class Agent:
             },
             handler=self._subagent_wait_all_handler,
         ))
+        self._register_swarm_tools()
         self.tools.register(Tool(
             name="subagent_kill",
             description="Termina un sub-agente ancora in esecuzione.",
@@ -1027,13 +1170,14 @@ class Agent:
             handler=self._subagent_kill_handler,
         ))
         # Self-evolution tools
-        for tool in [EVOLVE_SELF_TOOL, READ_SELF_TOOL, DELETE_BOOTSTRAP_TOOL]:
+        for tool in [EVOLVE_SELF_TOOL, READ_SELF_TOOL]:
             self.tools.register(tool)
         # Notify (Telegram)
         self.tools.register(NOTIFY_TOOL)
         self.tools.register(NOTIFY_VOICE_TOOL)
         self.tools.register(NOTIFY_FILE_TOOL)
         self.tools.register(NOTIFY_PHOTO_TOOL)
+        self.tools.register(NOTIFY_POLL_TOOL)
         # Scheduler (messaggi programmati)
         self.tools.register(SCHEDULE_NOTIFY_TOOL)
         self.tools.register(LIST_SCHEDULE_TOOL)
@@ -1075,6 +1219,316 @@ class Agent:
             loaded_tools.append(tool.name)
 
         return loaded_tools, failed
+
+    def _load_toolset_handler(self, packs: list[str]) -> ToolResult:
+        if not isinstance(packs, list) or not packs:
+            return ToolResult.fail(
+                "packs deve essere una lista non vuota.",
+                error_type=ErrorType.VALIDATION,
+            )
+        names, unknown = self.tool_router.activate(packs, set(self.tools.names()))
+        self._active_tool_names = names
+        active = ", ".join(sorted(self.tool_router.selection.packs))
+        suffix = f" Pacchetti sconosciuti: {', '.join(unknown)}." if unknown else ""
+        return ToolResult.ok(
+            f"Toolset aggiornato: {len(names)} tool; pacchetti attivi: {active}.{suffix}"
+        )
+
+    def _register_swarm_tools(self):
+        """Tool dello sciame: l'agente convoca e interroga i suoi specialisti.
+
+        Restano registrati anche a sciame disabilitato: meglio un messaggio che
+        spiega come riattivarlo che un tool che sparisce senza motivo.
+        """
+        self.tools.register(Tool(
+            name="swarm_spawn",
+            description=(
+                "Convoca un nuovo specialista persistente nel tuo sciame. Usalo "
+                "quando hai un dubbio che qualcuno con un punto di vista dedicato "
+                "chiarirebbe meglio (es. un revisore critico, un esperto di "
+                "sicurezza, un avvocato del diavolo). Resta disponibile anche nei "
+                "turni successivi."
+            ),
+            parameters={"type": "object", "properties": {
+                "name": {"type": "string",
+                         "description": "Nome breve con cui chiamarlo (es. 'revisore')."},
+                "role": {"type": "string",
+                         "description": "Cosa sa fare e da che angolo guarda il problema."},
+                "instructions": {"type": "string",
+                                 "description": "Istruzioni permanenti opzionali."},
+                "backend": {"type": "string",
+                            "description": "Backend opzionale; vuoto = come l'agente."},
+                "model": {"type": "string",
+                          "description": "Modello opzionale; vuoto = come l'agente."},
+            }, "required": ["name", "role"]},
+            # Convocare un agente non e' un'azione interna: nasce qualcuno che
+            # resta, consuma budget e comparira' nella tua rubrica. Lo chiede.
+            requires_approval=True,
+            handler=self._swarm_spawn_handler,
+        ))
+        self.tools.register(Tool(
+            name="swarm_ask",
+            description=(
+                "Fai una domanda a uno specialista dello sciame, oppure a più di "
+                "uno insieme (ognuno risponde per sé, pareri indipendenti). "
+                "Lascia 'name' vuoto per chiedere a tutti."
+            ),
+            parameters={"type": "object", "properties": {
+                "name": {"type": "string",
+                         "description": "Nome dello specialista; vuoto = tutti."},
+                "question": {"type": "string", "description": "La domanda."},
+            }, "required": ["question"]},
+            handler=self._swarm_ask_handler,
+        ))
+        self.tools.register(Tool(
+            name="swarm_discuss",
+            description=(
+                "Fa discutere gli specialisti TRA LORO su un argomento, a turni: "
+                "dal secondo giro ognuno legge gli altri e dice dove non è "
+                "d'accordo. Usalo quando il dubbio ha più risposte difendibili."
+            ),
+            parameters={"type": "object", "properties": {
+                "topic": {"type": "string", "description": "Argomento da discutere."},
+                "names": {"type": "array", "items": {"type": "string"},
+                          "description": "Partecipanti; vuoto = tutti."},
+                "rounds": {"type": "integer", "description": "Numero di giri (default 2)."},
+            }, "required": ["topic"]},
+            handler=self._swarm_discuss_handler,
+        ))
+        self.tools.register(Tool(
+            name="swarm_list",
+            description="Elenca gli specialisti attualmente nello sciame.",
+            parameters={"type": "object", "properties": {}},
+            handler=self._swarm_list_handler,
+        ))
+        self.tools.register(Tool(
+            name="swarm_dismiss",
+            description="Congeda uno specialista che non serve più.",
+            parameters={"type": "object", "properties": {
+                "name": {"type": "string", "description": "Nome dello specialista."},
+            }, "required": ["name"]},
+            handler=self._swarm_dismiss_handler,
+        ))
+        self.tools.register(Tool(
+            name="swarm_transcript",
+            description="Rilegge gli ultimi scambi avvenuti nello sciame.",
+            parameters={"type": "object", "properties": {
+                "limit": {"type": "integer", "description": "Quanti scambi (default 20)."},
+            }},
+            handler=self._swarm_transcript_handler,
+        ))
+
+    def _swarm(self):
+        if self.swarm is None:
+            raise RuntimeError(
+                "Sciame non attivo. Imposta SWARM_ENABLED=true nel .env e riavvia."
+            )
+        return self.swarm
+
+    def _swarm_spawn_handler(self, name: str, role: str, instructions: str = "",
+                             backend: str = "", model: str = "") -> ToolResult:
+        from core.swarm import SwarmError
+        try:
+            member = self._swarm().spawn(
+                name, role, instructions, backend, model,
+            )
+        except (SwarmError, RuntimeError) as exc:
+            return ToolResult.fail(str(exc), error_type=ErrorType.VALIDATION)
+        self.ui.status(f"[sciame: convocato {member.name}]")
+        return ToolResult.ok(
+            f"Specialista convocato: {member.describe()}. "
+            f"Ora puoi interrogarlo con swarm_ask(name='{member.name}', ...)."
+        )
+
+    def _swarm_ask_handler(self, question: str, name: str = "") -> ToolResult:
+        from core.swarm import SwarmError
+        try:
+            swarm = self._swarm()
+            if str(name or "").strip():
+                answer = swarm.ask(name, question)
+                return ToolResult.ok(f"[{name}] {answer}")
+            replies = swarm.broadcast(question)
+        except (SwarmError, RuntimeError) as exc:
+            return ToolResult.fail(str(exc), error_type=ErrorType.VALIDATION)
+        return ToolResult.ok("\n\n".join(
+            f"[{who}] {text}" for who, text in replies.items()
+        ))
+
+    def _swarm_discuss_handler(self, topic: str, names: list | None = None,
+                               rounds: int = 2) -> ToolResult:
+        from core.swarm import Swarm, SwarmError
+        try:
+            transcript = self._swarm().discuss(
+                topic, list(names) if names else None, rounds,
+            )
+        except (SwarmError, RuntimeError) as exc:
+            return ToolResult.fail(str(exc), error_type=ErrorType.VALIDATION)
+        return ToolResult.ok(Swarm.render_discussion(transcript))
+
+    def _swarm_list_handler(self) -> ToolResult:
+        try:
+            return ToolResult.ok(self._swarm().roster_text())
+        except RuntimeError as exc:
+            return ToolResult.fail(str(exc), error_type=ErrorType.VALIDATION)
+
+    def _swarm_dismiss_handler(self, name: str) -> ToolResult:
+        from core.swarm import SwarmError
+        try:
+            removed = self._swarm().dismiss(name)
+        except (SwarmError, RuntimeError) as exc:
+            return ToolResult.fail(str(exc), error_type=ErrorType.VALIDATION)
+        return ToolResult.ok(f"Congedato: {removed}.")
+
+    def _swarm_transcript_handler(self, limit: int = 20) -> ToolResult:
+        try:
+            entries = self._swarm().transcript(limit)
+        except RuntimeError as exc:
+            return ToolResult.fail(str(exc), error_type=ErrorType.VALIDATION)
+        if not entries:
+            return ToolResult.ok("Nessuno scambio registrato nello sciame.")
+        lines = [
+            f"{e.get('at', '')[:19]} {e.get('from')} → {e.get('to')}: "
+            f"{str(e.get('text', ''))[:400]}"
+            for e in entries
+        ]
+        return ToolResult.ok("\n".join(lines))
+
+    def _register_vurpub_tools(self):
+        """Tool del bancone vurpub. search/pull = lettura; approve/share = owner."""
+        self.tools.register(Tool(
+            name="vurpub_search",
+            description=("Cerca al bancone vurpub skill e soluzioni condivise da "
+                         "altri agenti openvurp. Restituisce candidati, non li "
+                         "attiva. Usa parole chiave del problema."),
+            parameters={"type": "object", "properties": {
+                "query": {"type": "string", "description": "parole chiave / problema"}},
+                "required": ["query"]},
+            handler=self._vurpub_search_handler,
+        ))
+        self.tools.register(Tool(
+            name="vurpub_pull",
+            description=("Pesca un'entry vurpub per id e la salva come CANDIDATO "
+                         "inerte (non attivo). Passa la guardia di sicurezza; "
+                         "mostra capacità richieste e motivi di eventuale rifiuto. "
+                         "Si attiva solo quando l'owner dà l'ok a voce (es. "
+                         "'approva <slug>'); allora — e solo allora — chiama "
+                         "vurpub_approve. NON dire all'owner di digitare comandi."),
+            parameters={"type": "object", "properties": {
+                "entry_id": {"type": "string", "description": "es. official/example-skill"}},
+                "required": ["entry_id"]},
+            handler=self._vurpub_pull_handler,
+        ))
+        self.tools.register(Tool(
+            name="vurpub_candidates",
+            description="Elenca i candidati vurpub scaricati ma non ancora attivati.",
+            parameters={"type": "object", "properties": {}},
+            handler=self._vurpub_candidates_handler,
+        ))
+        self.tools.register(Tool(
+            name="vurpub_approve",
+            description=("Promuove un candidato a skill ATTIVA (l'agente la userà). "
+                         "Solo owner. Ri-passa la guardia prima di attivare."),
+            parameters={"type": "object", "properties": {
+                "slug": {"type": "string", "description": "slug del candidato"}},
+                "required": ["slug"]},
+            requires_approval=True,
+            handler=self._vurpub_approve_handler,
+        ))
+        self.tools.register(Tool(
+            name="vurpub_reject",
+            description="Scarta un candidato vurpub senza attivarlo.",
+            parameters={"type": "object", "properties": {
+                "slug": {"type": "string", "description": "slug del candidato"}},
+                "required": ["slug"]},
+            handler=self._vurpub_reject_handler,
+        ))
+        self.tools.register(Tool(
+            name="vurpub_share",
+            description=("Contribuisce una skill/soluzione al bancone vurpub via "
+                         "Pull Request. PII strippata e gate locale prima dell'invio. "
+                         "Solo owner. Usa SOLO dopo che l'owner ha concordato di condividere."),
+            parameters={"type": "object", "properties": {
+                "kind": {"type": "string", "description": "skill | solution"},
+                "title": {"type": "string", "description": "titolo dell'entry"},
+                "body": {"type": "string", "description": "il contenuto (istruzioni o ricetta)"},
+                "tags": {"type": "string", "description": "tag separati da virgola"},
+                "network": {"type": "string", "description": "domini di rete usati, separati da virgola (vuoto = nessuno)"}},
+                "required": ["kind", "title", "body"]},
+            requires_approval=True,
+            handler=self._vurpub_share_handler,
+        ))
+
+    def _vurpub_search_handler(self, query: str = "") -> ToolResult:
+        if self.vurpub is None:
+            return ToolResult(success=False, output="", error="vurpub non disponibile.")
+        ok, msg = self.vurpub.sync()
+        if not ok:
+            return ToolResult(success=False, output="", error=f"sync vurpub fallito: {msg}")
+        rows = self.vurpub.search(query)
+        if not rows:
+            return ToolResult(success=True, output="Nessun risultato al bancone.")
+        lines = [f"[{r['trust']}] {r['id']} — {r['title']}\n    {r['description']}" for r in rows]
+        return ToolResult(success=True, output="Risultati vurpub:\n" + "\n".join(lines))
+
+    def _vurpub_pull_handler(self, entry_id: str = "") -> ToolResult:
+        if self.vurpub is None:
+            return ToolResult(success=False, output="", error="vurpub non disponibile.")
+        self.vurpub.sync()
+        res = self.vurpub.save_candidate(entry_id)
+        st = res.get("status")
+        if st == "candidate":
+            caps = res.get("capabilities", {})
+            return ToolResult(success=True, output=(
+                f"Candidato salvato (inerte): {res['id']} — {res.get('title','')}\n"
+                f"Tier: {res.get('trust')}  |  capacità richieste: {caps}\n"
+                f"Resta inattivo finché non mi dai l'ok: dimmi «approva "
+                f"{res.get('slug')}» (a voce, non è un comando) e la attivo io."))
+        if st == "rejected":
+            return ToolResult(success=False, output="",
+                              error="Entry RIFIUTATA dalla guardia: " + "; ".join(res.get("reasons", [])))
+        return ToolResult(success=False, output="", error=f"pull: {st}")
+
+    def _vurpub_candidates_handler(self) -> ToolResult:
+        if self.vurpub is None:
+            return ToolResult(success=False, output="", error="vurpub non disponibile.")
+        rows = self.vurpub.list_candidates()
+        if not rows:
+            return ToolResult(success=True, output="Nessun candidato in attesa.")
+        lines = [f"{r['slug']} — {r['title']} [{r['trust']}] capacità={r['capabilities']}" for r in rows]
+        return ToolResult(success=True, output="Candidati in attesa di approvazione:\n" + "\n".join(lines))
+
+    def _vurpub_approve_handler(self, slug: str = "") -> ToolResult:
+        if self.vurpub is None:
+            return ToolResult(success=False, output="", error="vurpub non disponibile.")
+        res = self.vurpub.approve(slug)
+        if res.get("status") == "active":
+            return ToolResult(success=True, output=f"Skill attivata: {res['path']}")
+        if res.get("status") == "rejected":
+            return ToolResult(success=False, output="",
+                              error="Guardia ha bloccato l'attivazione: " + "; ".join(res.get("reasons", [])))
+        return ToolResult(success=False, output="", error=f"approve: {res.get('status')}")
+
+    def _vurpub_reject_handler(self, slug: str = "") -> ToolResult:
+        if self.vurpub is None:
+            return ToolResult(success=False, output="", error="vurpub non disponibile.")
+        res = self.vurpub.reject(slug)
+        return ToolResult(success=True, output=f"Candidato {slug}: {res.get('status')}")
+
+    def _vurpub_share_handler(self, kind: str = "skill", title: str = "", body: str = "",
+                              tags: str = "", network: str = "") -> ToolResult:
+        if self.vurpub is None:
+            return ToolResult(success=False, output="", error="vurpub non disponibile.")
+        taglist = [t.strip() for t in (tags or "").split(",") if t.strip()]
+        netlist = [n.strip() for n in (network or "").split(",") if n.strip()]
+        caps = {"shell": False, "file_read": False, "file_write": False, "network": netlist}
+        res = self.vurpub.share(kind=kind, title=title, body=body, tags=taglist, capabilities=caps)
+        st = res.get("status")
+        if st == "pr_open":
+            return ToolResult(success=True, output=f"Contributo inviato come PR: {res['url']}")
+        if st == "blocked":
+            return ToolResult(success=False, output="",
+                              error="Gate locale ha bloccato il contributo: " + "; ".join(res.get("reasons", [])))
+        return ToolResult(success=False, output="", error=f"share: {st} — {res.get('error','')}")
 
     def _pact_handler(self, action: str = "", pact_type: str = "",
                       description: str = "", pattern: str = "",
@@ -1691,15 +2145,44 @@ class Agent:
         if session_type != "main":
             memory_text = ""
         else:
-            memory_text = self.memory.get_relevant(user_input, session_type=session_type)
+            try:
+                import config as cfg
+                memory_budget = int(getattr(cfg, "MEMORY_RETRIEVAL_CHARS", 3000))
+            except Exception:
+                memory_budget = 3000
+            memory_text = self.memory.get_relevant(
+                user_input, budget_chars=max(500, memory_budget),
+                session_type=session_type,
+            )
 
         # 4. Schema tool
-        native_tools = self._active_llm.supports_function_calling
-        tools_section = self.tools.prompt_section(native_tools=native_tools)
-        method_text = build_operating_method(snapshot, self.tools.names()) if environment_text else ""
-        capability_text = render_capability_prompt(
-            inspect_runtime_capabilities(self.tools.names())
+        native_tools = getattr(
+            self._active_llm, "supports_tool_transport",
+            self._active_llm.supports_function_calling,
         )
+        tools_section = self.tools.prompt_section(
+            native_tools=native_tools,
+            names=self._active_tool_names,
+        )
+        # I backend CLI (Codex/Claude) passano gli schemi come dynamic tools,
+        # ma quel canale puo' mancare. Senza un indice testuale il modello non
+        # saprebbe nemmeno di avere dei tool: e' cosi' che l'agente e' diventato
+        # un chatbot che descrive le azioni invece di eseguirle.
+        if not tools_section and self._active_llm.backend in ("codex", "claude_cli"):
+            tools_section = self.tools.compact_index(names=self._active_tool_names)
+        method_text = build_operating_method(
+            snapshot, sorted(self._active_tool_names)
+        ) if environment_text else ""
+        sensory_tools = {
+            "web_search", "web_fetch", "browser", "browser_devtools",
+            "image_analyze", "desktop_screenshot", "audio_transcribe",
+            "listen_mic", "speak", "pdf_read", "notify_file", "notify_photo",
+        }
+        capability_text = ""
+        if self._active_tool_names.intersection(sensory_tools):
+            capability_text = render_capability_prompt(
+                inspect_runtime_capabilities(sorted(self._active_tool_names))
+            )
 
         # 5. Costruisci system prompt con bootstrap context iniettato
         system = self.context_mgr.build_system_prompt(
@@ -1714,9 +2197,15 @@ class Agent:
         if capability_text:
             system += "\n\n" + capability_text
 
+        try:
+            import config as cfg
+            continuity_budget = int(getattr(cfg, "CONTINUITY_PROMPT_CHARS", 2000))
+        except Exception:
+            continuity_budget = 2000
         continuity_text = self.continuity.build(
             user_input=user_input,
             session_type=session_type,
+            budget_chars=max(500, continuity_budget),
         ) if self.continuity else ""
         if continuity_text:
             system += "\n\n" + continuity_text
@@ -1735,11 +2224,54 @@ class Agent:
         if kernel_text:
             system += "\n\n" + kernel_text
 
+        # Sciame: dirlo esplicitamente, altrimenti i tool esistono ma non
+        # vengono mai usati — un dubbio si risolve tirando a indovinare.
+        if self.swarm is not None and session_type == "main":
+            roster = self.swarm.roster_text()
+            system += (
+                "\n\n## IL TUO SCIAME\n"
+                "Puoi convocare da solo degli specialisti persistenti e parlarci. "
+                "Fallo quando hai un dubbio vero: due letture difendibili dello "
+                "stesso problema, una decisione rischiosa, una tua conclusione che "
+                "vorresti veder contestata prima di consegnarla.\n"
+                "- `swarm_spawn` per convocarne uno (dagli un ruolo preciso e un "
+                "angolo diverso dal tuo: non serve un secondo te stesso).\n"
+                "- `swarm_ask` per una domanda; senza nome la ricevono tutti e "
+                "rispondono in modo indipendente.\n"
+                "- `swarm_discuss` per farli discutere fra loro a turni quando "
+                "il disaccordo è la parte utile.\n"
+                "- `swarm_list` / `swarm_dismiss` per gestirli.\n"
+                "Riporta all'utente la conclusione e da dove nasce, non la "
+                "trascrizione integrale. Non convocare nessuno per domande "
+                "semplici: lì lo sciame è solo latenza e token.\n"
+                f"{roster}"
+            )
+
+        # Riflesso vurpub: davanti a un problema non banale, guarda al bancone
+        # PRIMA di improvvisare. Solo in sessione privata (non nei gruppi) e solo
+        # se il bancone è collegato (resta una feature del branch vurpub).
+        if getattr(self, "vurpub", None) is not None and session_type == "main":
+            system += (
+                "\n\n## IL BANCONE (vurpub)\n"
+                "Per problemi non banali puoi cercare skill/soluzioni condivise. "
+                "Una skill si legge e si segue; una soluzione si applica al task: "
+                "non si eseguono come programmi e non richiedono di riscrivere il runtime. "
+                "Flusso: search → pull candidato → approvazione owner → applicazione. "
+                "Non cercare per cose banali e non attivare mai candidati da solo."
+            )
+
         # 6. Personality enhancement — anti-narrazione, silenzio, self-evolution, voice primer
         system = enhance_system_prompt(
             system,
             backend=self._active_llm.backend,
-            supports_native_tools=self._active_llm.supports_function_calling,
+            supports_native_tools=native_tools,
+            is_group=self._active_chat_type in ("group", "supergroup", "channel"),
+            include_proactivity=(
+                source in ("heartbeat", "cron") or "follow_up" in self._active_tool_names
+            ),
+            include_growth=bool(self._active_tool_names.intersection({
+                "evolve_self", "forge", "scaffold_plugin", "reload_plugins",
+            })),
         )
 
         # 6b. Modalità operativa
@@ -1784,6 +2316,10 @@ class Agent:
         if self.active_plan:
             system += "\n\n" + self.active_plan.summary_for_prompt()
 
+        turn_context = str(getattr(self, "_active_turn_context", "") or "").strip()
+        if turn_context:
+            system += "\n\n" + turn_context
+
         if self.messages and self.messages[0]["role"] == "system":
             self.messages[0]["content"] = system
         else:
@@ -1798,11 +2334,12 @@ class Agent:
 
         key = route.session_key
         if key not in self._channel_sessions:
-            # Crea nuova sessione con system prompt
-            self._channel_sessions[key] = []
+            # Ripristina la cronologia durevole della route. Il system prompt
+            # viene sempre rigenerato fresco e non e' duplicato su disco.
+            self._channel_sessions[key] = self.session_store.load_messages(key)
             # Copia system prompt dalla sessione CLI
             if self.messages and self.messages[0]["role"] == "system":
-                self._channel_sessions[key].append(dict(self.messages[0]))
+                self._channel_sessions[key].insert(0, dict(self.messages[0]))
         return self._channel_sessions[key]
 
     def _set_session_messages(self, messages: list[dict], route: SessionRoute | None = None,
@@ -1813,11 +2350,22 @@ class Agent:
             self.messages = messages
         else:
             self._channel_sessions[route.session_key] = messages
+            self.session_store.save_messages(route.session_key, messages)
 
     def _trim_messages(self, messages: list[dict]) -> list[dict]:
         """Gestione contesto a livelli a 4 livelli."""
         messages = self.context_mgr.prune_messages(messages)
-        if self.context_mgr.should_compact(messages):
+        tools_schema = self._get_tools_schema()
+        try:
+            import config as cfg
+            target = int(getattr(cfg, "CONTEXT_TARGET_TOKENS", 24000))
+        except Exception:
+            target = 24000
+        schema_tokens = self.context_mgr.schema_chars(tools_schema) // 4
+        messages = self.context_mgr.prune_to_target(
+            messages, max(4000, target - schema_tokens),
+        )
+        if self.context_mgr.should_compact(messages, tools_schema):
             messages = self._do_llm_compaction(messages)
         return messages
 
@@ -1854,7 +2402,8 @@ class Agent:
     def run(self, user_input: str, source: str = "cli", sender: str = "user",
             actor_id: str = "cli_owner", chat_id: str = "", thread_id: str = "",
             session_key: str = "", parent_session_key: str = "",
-            addressed: bool = True, chat_type: str = ""):
+            addressed: bool = True, chat_type: str = "", turn_context: str = "",
+            llm_backend: str = "", llm_model: str = ""):
         """Main loop per un turno utente.
 
         Args:
@@ -1869,11 +2418,10 @@ class Agent:
         """
         import config as cfg
 
-        max_iter = getattr(cfg, 'MAX_ITERATIONS', 50)
-        # Budget autonomia: i cicli heartbeat lavorano da soli, con un
-        # tetto di iterazioni molto più basso dei turni interattivi.
-        if (source or "") == "heartbeat":
-            max_iter = min(max_iter, getattr(cfg, 'HEARTBEAT_MAX_ITERATIONS', 8))
+        # Budget autonomia: heartbeat e backend CLI hanno tetti più bassi dei
+        # turni interattivi (vedi iteration_budget). Ricalcolato più sotto,
+        # quando backend e modalità del turno sono noti.
+        max_iter = self.iteration_budget(source=source or "cli")
         previous_actor = self._active_actor_id
         previous_channel = self._active_channel
         previous_route = self._active_route
@@ -1882,13 +2430,15 @@ class Agent:
         previous_llm = self._active_llm
         previous_addressed = self._active_addressed
         previous_chat_type = self._active_chat_type
+        previous_agent_state = self.agent_state
+        previous_continuity = self.continuity
+        previous_turn_context = getattr(self, "_active_turn_context", "")
         self._active_actor_id = actor_id or "cli_owner"
         self._active_channel = source or "cli"
         self._active_addressed = bool(addressed)
         self._active_chat_type = chat_type or ""
         self._active_channel = source or "cli"
-        # Bus attività: il messaggio utente (per la dashboard live / mirror)
-        self._emit("user", text=str(user_input or "")[:4000], sender=sender or "user")
+        self._active_turn_context = str(turn_context or "")[:8000]
 
         # Presenza: registra dove l'owner sta parlando ADESSO (mai per i
         # cicli autonomi) — i messaggi proattivi lo raggiungeranno lì.
@@ -1910,14 +2460,47 @@ class Agent:
         session_type_for_privacy = resolve_session_type(
             source or "cli", sender or "user", self._active_chat_type,
         )
-        self._active_llm, privacy_reason = self._select_llm(
-            session_type_for_privacy, user_input,
-        )
+        requested_backend = str(llm_backend or "").strip().lower()
+        if requested_backend == "auto":
+            self._active_llm, route_info = self._automatic_llm(
+                user_input, session_type_for_privacy,
+            )
+            self._last_llm_route = route_info
+            privacy_reason = ""
+            self.ui.status(
+                f"[router economico: {self._active_llm.backend}/"
+                f"{self._active_llm.model} — {route_info['reason']}]"
+            )
+        elif llm_backend or llm_model:
+            self._active_llm = self._configured_llm(llm_backend, llm_model)
+            self._last_llm_route = {
+                "backend": self._active_llm.backend,
+                "model": self._active_llm.model,
+                "strategy": "explicit",
+                "reason": "scelta manuale della chat",
+            }
+            privacy_reason = ""
+            self.ui.status(
+                f"[chat: {self._active_llm.backend}/{self._active_llm.model}]"
+            )
+        else:
+            self._active_llm, privacy_reason = self._select_llm(
+                session_type_for_privacy, user_input,
+            )
+            self._last_llm_route = {
+                "backend": self._active_llm.backend,
+                "model": self._active_llm.model,
+                "strategy": "default",
+                "reason": privacy_reason,
+            }
         if privacy_reason:
             self.ui.status(
                 f"[privacy: turno instradato su {self._active_llm.backend}/"
                 f"{self._active_llm.model} — {privacy_reason}]"
             )
+        max_iter = self.iteration_budget(
+            source=source or "cli", backend=self._active_llm.backend,
+        )
         route = self._build_route(
             source=source,
             sender=sender,
@@ -1928,6 +2511,10 @@ class Agent:
             parent_session_key=parent_session_key,
         )
         self._active_route = route
+        self.agent_state = self._agent_state_for_route(route)
+        self.continuity = ContinuityPromptBuilder(self.agent_state, self.journal)
+        # Bus attività dopo il routing, così l'evento è filtrabile per chat.
+        self._emit("user", text=str(user_input or "")[:4000], sender=sender or "user")
         runtime_session = self._get_runtime_session(route)
         self._active_runtime_session = runtime_session
         self._record_learning_signal(user_input, source, self._active_actor_id)
@@ -1935,6 +2522,7 @@ class Agent:
         journal_turn_id = self._start_journal_turn(user_input, source, route)
         journal_finished = False
         state_finished = False
+        turn_token_start = runtime_session.tokens.total
 
         try:
             messages = self._get_session_messages(route)
@@ -1954,6 +2542,21 @@ class Agent:
                 active_goal=active_goal,
                 is_addressed=self._active_addressed,
             )
+            selection = self.tool_router.select(
+                user_input,
+                source=source or "cli",
+                mode=self._active_kernel_plan.mode,
+                available=set(self.tools.names()),
+            )
+            self._active_tool_names = selection.names.intersection(self.tools.names())
+            max_iter = self.iteration_budget(
+                source=source or "cli",
+                backend=self._active_llm.backend,
+                mode=self._active_kernel_plan.mode,
+            )
+            # Il guardiano anti-loop conta per turno: un rifiuto di ieri non
+            # deve impedire un tentativo legittimo oggi.
+            self._failed_calls = {}
             self.agent_state.begin_turn(
                 goal=self._active_kernel_plan.goal,
                 source=source or "cli",
@@ -1990,14 +2593,30 @@ class Agent:
             self.plugin_mgr.fire_chain("before_llm_call", messages)
             use_native = self._active_llm.supports_function_calling
             streaming_enabled = (
-                use_native
-                and _config_bool("STREAMING_ENABLED", True)
+                _config_bool("STREAMING_ENABLED", True)
                 and hasattr(self.ui, "stream_token")
+                and (
+                    use_native
+                    or getattr(self._active_llm, "supports_text_streaming", False)
+                )
             )
 
             _had_tool_calls = False
             kernel_interventions = 0
             for iteration in range(1, max_iter + 1):
+                turn_limit = max(0, int(getattr(cfg, "TURN_TOKEN_BUDGET", 48000)))
+                if (turn_limit and iteration > 1
+                        and runtime_session.tokens.total - turn_token_start >= turn_limit):
+                    self.ui.stop_spinner()
+                    self.ui.openvurp_say(
+                        "Mi fermo qui per rispettare il budget token del turno. "
+                        "Ho conservato lo stato: puoi chiedermi di continuare."
+                    )
+                    self.agent_state.fail(
+                        "Per-turn token budget reached.", phase=AgentPhase.BLOCKED,
+                    )
+                    state_finished = True
+                    break
                 # Budget giornaliero: protegge dai loop che bruciano credito
                 if self.budget is not None and self.budget.over_budget():
                     self.ui.stop_spinner()
@@ -2012,8 +2631,11 @@ class Agent:
                     break
 
                 stream_handler, stream_state = (None, None)
+                provider_event_handler = None
                 if streaming_enabled:
                     stream_handler, stream_state = self._make_stream_handler()
+                if self._active_llm.backend == "codex":
+                    provider_event_handler = self._make_codex_activity_handler()
                 if self.budget is not None:
                     self.budget.record_call()
                 if _had_tool_calls:
@@ -2021,7 +2643,15 @@ class Agent:
                 else:
                     self.ui.start_spinner("Thinking...")
 
-                budget = self.context_mgr.check_budget(messages)
+                trimmed_messages = self._trim_messages(messages)
+                if trimmed_messages is not messages:
+                    messages = trimmed_messages
+                    self._set_session_messages(messages, route)
+                tool_transport = getattr(
+                    self._active_llm, "supports_tool_transport", use_native,
+                )
+                tools_schema = self._get_tools_schema() if tool_transport else []
+                budget = self.context_mgr.check_budget(messages, tools_schema)
                 if budget["over_budget"]:
                     self.ui.stop_spinner()
                     self.ui.status("[compattazione contesto...]")
@@ -2031,7 +2661,6 @@ class Agent:
 
                 try:
                     if use_native:
-                        tools_schema = self._get_tools_schema()
                         if stream_handler:
                             llm_resp, duration_ms, tok_in, tok_out = \
                                 self._active_llm.call_with_tools_streamed_timed(
@@ -2043,8 +2672,18 @@ class Agent:
                         chat_text = llm_resp.text
                         response_text = llm_resp.text
                     else:
-                        response_text, duration_ms, tok_in, tok_out = \
-                            self._active_llm.call_with_timing(messages)
+                        if self._active_llm.backend == "codex":
+                            response_text, duration_ms, tok_in, tok_out = \
+                                self._active_llm.call_streamed_with_timing(
+                                    messages, on_text=stream_handler,
+                                    on_event=provider_event_handler,
+                                    tools_schema=tools_schema,
+                                    on_tool=lambda name, args: self._execute_codex_tool(
+                                        name, args, source,
+                                    ))
+                        else:
+                            response_text, duration_ms, tok_in, tok_out = \
+                                self._active_llm.call_with_timing(messages)
                         tool_calls_native = None
                         chat_text = None
 
@@ -2053,6 +2692,7 @@ class Agent:
                         duration_ms, tok_in, tok_out
                     )
                     runtime_session.tokens.add_call(tok_in, tok_out)
+                    self._warn_if_degraded()
 
                 except Exception as e:
                     self.ui.stop_spinner()
@@ -2080,8 +2720,23 @@ class Agent:
                                 chat_text = llm_resp.text
                                 response_text = llm_resp.text
                             else:
-                                response_text, duration_ms, tok_in, tok_out = \
-                                    self._active_llm.call_with_timing(messages)
+                                if self._active_llm.backend == "codex":
+                                    stream_handler, stream_state = (None, None)
+                                    if streaming_enabled:
+                                        stream_handler, stream_state = self._make_stream_handler()
+                                    provider_event_handler = self._make_codex_activity_handler()
+                                    tools_schema = self._get_tools_schema()
+                                    response_text, duration_ms, tok_in, tok_out = \
+                                        self._active_llm.call_streamed_with_timing(
+                                            messages, on_text=stream_handler,
+                                            on_event=provider_event_handler,
+                                            tools_schema=tools_schema,
+                                            on_tool=lambda name, args: self._execute_codex_tool(
+                                                name, args, source,
+                                            ))
+                                else:
+                                    response_text, duration_ms, tok_in, tok_out = \
+                                        self._active_llm.call_with_timing(messages)
                                 tool_calls_native = None
                                 chat_text = None
                             runtime_session.tokens.add_call(tok_in, tok_out)
@@ -2164,7 +2819,12 @@ class Agent:
                         waiting_user=waiting_user,
                         interventions=kernel_interventions,
                     )
-                    if not gate.allowed:
+                    # All'ultimo giro la revisione non ha piu' un giro dopo in
+                    # cui avvenire: insistere significherebbe buttare via una
+                    # risposta gia' pronta e chiudere il turno a mani vuote.
+                    if not gate.allowed and iteration >= max_iter:
+                        self.ui.status("[revisione saltata: ultimo giro disponibile]")
+                    elif not gate.allowed:
                         kernel_interventions += 1
                         self.agent_state.transition(AgentPhase.REVISING, gate.reason)
                         messages.append({"role": "user", "content": gate.prompt})
@@ -2281,12 +2941,10 @@ class Agent:
                     if self._touches_memory(tool_name, tool_args):
                         needs_refresh = True
                         break
-                    if tool_name in ("evolve_self", "delete_bootstrap"):
+                    if tool_name == "evolve_self":
                         evolved_file = tool_args.get("file", "")
                         if evolved_file:
                             self.bootstrap.invalidate(normalize_workspace_filename(evolved_file))
-                        else:
-                            self.bootstrap.invalidate("BOOTSTRAP.md")
                         needs_refresh = True
                         break
                     if tool_name in (
@@ -2312,7 +2970,17 @@ class Agent:
                     phase=AgentPhase.BLOCKED,
                 )
                 state_finished = True
-                self.ui.openvurp_say("Ho raggiunto il limite di iterazioni. Vuoi che continui?")
+                # Dire solo "limite raggiunto" scarica sull'utente una decisione
+                # che non ha gli elementi per prendere: non sa quante iterazioni
+                # ha il turno, ne' cosa e' stato fatto.
+                done = len(runtime_session.tool_history) - tool_history_start
+                self.ui.openvurp_say(
+                    f"Mi sono fermato dopo {max_iter} passaggi "
+                    f"({done} azioni eseguite) senza chiudere la risposta. "
+                    f"Dimmi 'continua' per riprendere da qui, oppure alza "
+                    f"{'CLI_AGENT_MAX_ITERATIONS' if self._active_llm.backend in {'codex', 'claude_cli'} else 'MAX_ITERATIONS'} "
+                    f"nel .env se succede spesso."
+                )
         finally:
             if not state_finished:
                 self.agent_state.fail(
@@ -2342,6 +3010,9 @@ class Agent:
             self._active_llm = previous_llm
             self._active_addressed = previous_addressed
             self._active_chat_type = previous_chat_type
+            self.agent_state = previous_agent_state
+            self.continuity = previous_continuity
+            self._active_turn_context = previous_turn_context
 
     def _make_stream_handler(self):
         """Crea un callback per lo streaming live del testo verso la UI.
@@ -2379,11 +3050,242 @@ class Agent:
 
         return handler, state
 
+    def _make_codex_activity_handler(self):
+        """Traduce gli item Codex App Server nell'attività UI di openvurp.
+
+        Il testo finale resta sul canale token; ricerche, comandi, MCP e
+        modifiche file diventano invece passaggi separati, visibili sia nella
+        CLI/TUI sia nel pannello attività della dashboard.
+        """
+        shown_items: set[str] = set()
+
+        def _preview(value, limit: int = 180) -> str:
+            if isinstance(value, (list, tuple)):
+                value = " ".join(str(part) for part in value)
+            elif isinstance(value, dict):
+                try:
+                    value = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+                except Exception:
+                    value = str(value)
+            clean = " ".join(str(value or "").split())
+            return clean if len(clean) <= limit else clean[:limit - 1] + "…"
+
+        def _show_tool(name: str, args: dict, step: str, text: str):
+            self.ui.stop_spinner()
+            show_tool = getattr(self.ui, "show_tool", None)
+            if show_tool:
+                show_tool(name, args)
+            else:
+                self.ui.status(f"[{name}: {text}]")
+            self._emit("step", step=step, text=text or name)
+
+        def handler(event: dict):
+            method = str(event.get("method", "") or "")
+            params = event.get("params") or {}
+            item = params.get("item") or {}
+            item_type = str(item.get("type", "") or "")
+            item_id = str(item.get("id", "") or "")
+
+            if method == "item/started" and item_id not in shown_items:
+                shown_items.add(item_id)
+                if item_type == "commandExecution":
+                    command = _preview(item.get("command")) or "comando"
+                    self.ui.stop_spinner()
+                    show_cmd = getattr(self.ui, "show_cmd", None)
+                    if show_cmd:
+                        show_cmd(command)
+                    else:
+                        self.ui.status(f"[shell: {command}]")
+                    self._emit("step", step="shell", text=command)
+                elif item_type == "webSearch":
+                    action = item.get("action") or {}
+                    detail = (
+                        item.get("query") or action.get("query")
+                        or action.get("queries") or action.get("url")
+                        or action.get("pattern") or "ricerca web"
+                    )
+                    detail = _preview(detail)
+                    _show_tool("web_search", {"query": detail}, "web", detail)
+                elif item_type == "mcpToolCall":
+                    server = _preview(item.get("server"), 60)
+                    tool = _preview(item.get("tool"), 80)
+                    label = f"mcp_{server}_{tool}" if server else f"mcp_{tool}"
+                    detail = f"{server}/{tool}".strip("/")
+                    _show_tool(
+                        label, {"name": detail, "arguments": item.get("arguments")},
+                        "mcp", detail,
+                    )
+                elif item_type == "fileChange":
+                    changes = item.get("changes") or []
+                    paths = [_preview(change.get("path"), 100) for change in changes
+                             if isinstance(change, dict) and change.get("path")]
+                    detail = ", ".join(paths[:4]) or "modifica file"
+                    _show_tool("file_change", {"path": detail}, "file", detail)
+                elif item_type == "imageView":
+                    detail = _preview(item.get("path")) or "immagine"
+                    _show_tool("image_view", {"path": detail}, "image", detail)
+                elif item_type == "collabToolCall":
+                    detail = _preview(item.get("tool")) or "collaborazione agente"
+                    _show_tool("agent_collaboration", {"name": detail}, "agent", detail)
+                elif item_type == "contextCompaction":
+                    self.ui.stop_spinner()
+                    self.ui.status("[Codex compatta il contesto]")
+                    self._emit("step", step="context", text="compattazione contesto")
+
+            if method == "item/completed":
+                if item_type == "agentMessage" and item.get("phase") == "commentary":
+                    commentary = _preview(item.get("text"), 260)
+                    if commentary:
+                        self.ui.stop_spinner()
+                        self.ui.status(f"[Codex: {commentary}]")
+                        self._emit("step", step="thinking", text=commentary)
+                elif item_type == "commandExecution":
+                    output = str(item.get("aggregatedOutput", "") or "").strip()
+                    if output:
+                        show_output = getattr(self.ui, "show_output", None)
+                        if show_output:
+                            show_output(
+                                output,
+                                is_error=(item.get("status") == "failed"),
+                            )
+                elif item_type == "mcpToolCall":
+                    output = item.get("error") or item.get("result")
+                    if output:
+                        show_output = getattr(self.ui, "show_output", None)
+                        if show_output:
+                            show_output(
+                                _preview(output, 700),
+                                is_error=bool(item.get("error")),
+                            )
+
+        return handler
+
+    def _warn_if_degraded(self) -> None:
+        """Segnala una sola volta che il backend gira in modalità ridotta.
+
+        Un degrado silenzioso è la cosa peggiore: l'agente sembra semplicemente
+        diventato stupido, senza che nulla lo spieghi.
+        """
+        reason = str(getattr(self._active_llm, "degraded_reason", "") or "")
+        if not reason:
+            return
+        if reason == getattr(self, "_last_degraded_warning", ""):
+            return
+        self._last_degraded_warning = reason
+        self.ui.status(f"[backend in modalità ridotta] {reason}")
+        self.observer.log_event("llm_backend_degraded", {"reason": reason[:300]})
+
+    def _execute_codex_tool(
+        self, tool_name: str, tool_args: dict, source: str = "cli",
+    ) -> str:
+        """Esegue un tool openvurp e limita solo il payload rimandato a Codex.
+
+        L'esecuzione, le approvazioni e l'audit restano quelli di openvurp. Il
+        risultato completo non viene perso dal runtime, ma una pagina web o un
+        comando molto verboso non puo' occupare da solo l'intero contesto LLM.
+        """
+        output = str(self._execute_tool(tool_name, tool_args, source) or "")
+        from core.security.untrusted import is_untrusted_tool, wrap_untrusted
+        if is_untrusted_tool(tool_name):
+            output = wrap_untrusted(tool_name, output)
+        try:
+            import config as cfg
+            limit = int(getattr(cfg, "CODEX_TOOL_RESULT_MAX_CHARS", 8000) or 8000)
+        except (TypeError, ValueError, ImportError):
+            limit = 8000
+        limit = max(1000, min(limit, 50000))
+        if len(output) <= limit:
+            return output
+
+        marker = "\n\n[... risultato tool compattato per ridurre i token ...]\n\n"
+        available = max(1, limit - len(marker))
+        head_size = int(available * 0.65)
+        tail_size = available - head_size
+        return output[:head_size] + marker + output[-tail_size:]
+
+    @staticmethod
+    def iteration_budget(source: str = "cli", backend: str = "",
+                         mode: str = "") -> int:
+        """Quanti giri di autonomia ha questo turno.
+
+        Estratto dal loop perche' e' una regola con conseguenze visibili: se il
+        budget non lascia spazio a un secondo passaggio, ogni turno che richiede
+        una revisione o un tool testuale finisce con "limite di iterazioni"
+        senza aver concluso nulla.
+        """
+        import config as cfg
+
+        budget = int(getattr(cfg, "MAX_ITERATIONS", 20) or 20)
+        if (source or "") == "heartbeat":
+            budget = min(budget, int(getattr(cfg, "HEARTBEAT_MAX_ITERATIONS", 8)))
+        if backend in {"codex", "claude_cli"}:
+            budget = min(budget, max(2, int(getattr(cfg, "CLI_AGENT_MAX_ITERATIONS", 6))))
+        if mode in {"chat", "answer"}:
+            budget = min(budget, int(getattr(cfg, "CHAT_MAX_ITERATIONS", 4)))
+        # Sotto i due giri il loop non puo' nemmeno rileggere il risultato di
+        # un tool: sarebbe un turno monco per costruzione.
+        return max(2, budget)
+
+    @staticmethod
+    def _call_fingerprint(tool_name: str, tool_args: dict) -> str:
+        """Identita' di una chiamata, per riconoscerne la ripetizione."""
+        try:
+            payload = json.dumps(tool_args or {}, sort_keys=True, ensure_ascii=False)
+        except (TypeError, ValueError):
+            payload = repr(tool_args)
+        return f"{tool_name}:{payload}"[:600]
+
+    def _loop_guard(self, tool_name: str, tool_args: dict) -> str:
+        """Blocca la stessa chiamata gia' fallita identica troppe volte.
+
+        Un modello davanti a un rifiuto stabile (budget esaurito, permesso
+        negato) tende a ritentare identico: quattro `anima_update` di fila che
+        rispondono "budget esaurito" non aggiungono nulla, bruciano le
+        iterazioni e fanno scadere il turno del provider. Dopo N tentativi il
+        runtime smette di eseguire e chiede al modello di fermarsi.
+        """
+        try:
+            import config as cfg
+            limit = int(getattr(cfg, "TOOL_MAX_IDENTICAL_FAILURES", 3) or 3)
+        except Exception:
+            limit = 3
+        limit = max(2, limit)
+        failures = getattr(self, "_failed_calls", None)
+        if failures is None:
+            failures = self._failed_calls = {}
+        count = failures.get(self._call_fingerprint(tool_name, tool_args), 0)
+        if count < limit:
+            return ""
+        self.ui.status(f"[{tool_name}: stessa chiamata fallita {count}x — mi fermo]")
+        self.observer.log_event("tool_loop_blocked", {
+            "tool": tool_name, "failures": count,
+        })
+        return (
+            f"[BLOCCATO DAL RUNTIME] '{tool_name}' è già fallito {count} volte con "
+            f"argomenti identici. Il risultato non cambierà ritentando. Smetti di "
+            f"chiamarlo: spiega all'utente cosa hai provato e perché non è "
+            f"possibile, oppure cambia strategia."
+        )
+
+    def _note_call_outcome(self, tool_name: str, tool_args: dict, success: bool) -> None:
+        failures = getattr(self, "_failed_calls", None)
+        if failures is None:
+            failures = self._failed_calls = {}
+        key = self._call_fingerprint(tool_name, tool_args)
+        if success:
+            failures.pop(key, None)
+        else:
+            failures[key] = failures.get(key, 0) + 1
+
     def _execute_tool(self, tool_name: str, tool_args: dict, source: str = "cli") -> str:
         """Esegue un singolo tool con safety check."""
         effective_tool_name = tool_name or "shell"
         mode = getattr(self, "approval_mode", "safe")
         self._current_tool_source = source
+
+        blocked = self._loop_guard(effective_tool_name, tool_args)
+        if blocked:
+            return blocked
 
         # Plan mode: solo osservazione. Le azioni che modificano qualcosa
         # vengono restituite come passi del piano, non eseguite.
@@ -2521,7 +3423,17 @@ class Agent:
             show_tool(tool_name, tool_args if isinstance(tool_args, dict) else None)
         else:
             self.ui.status(f"[tool: {tool_name}]")
-        self._emit("step", step="tool", text=tool_name)
+        preview = ""
+        if isinstance(tool_args, dict):
+            for key in (
+                "query", "url", "path", "file", "command", "pattern",
+                "name", "task", "action",
+            ):
+                if tool_args.get(key):
+                    preview = " ".join(str(tool_args[key]).split())[:140]
+                    break
+        event_text = f"{tool_name} — {preview}" if preview else tool_name
+        self._emit("step", step="tool", text=event_text)
         result = self.executor.execute(
             tool_name,
             tool_args,
@@ -2535,6 +3447,7 @@ class Agent:
             self.ui.show_output(result.output)
         else:
             self.ui.show_output(result.error or result.output, is_error=True)
+        self._note_call_outcome(tool_name, tool_args, result.success)
         self._record_tool_learning(result, tool_name, tool_args, source)
 
         self._active_runtime_session.add_tool_result(result, tool_name, tool_args)
@@ -2548,7 +3461,15 @@ class Agent:
         """Pubblica un'attività sul bus (dashboard live). Mai bloccante."""
         try:
             from core import activity
-            activity.publish(kind, source=getattr(self, "_active_channel", "cli"), **data)
+            route = getattr(self, "_active_route", None)
+            meta = {
+                "source": getattr(self, "_active_channel", "cli"),
+                "session_key": getattr(route, "session_key", ""),
+                "chat_id": getattr(route, "chat_id", ""),
+                "actor_id": getattr(self, "_active_actor_id", ""),
+            }
+            meta.update(data)
+            activity.publish(kind, **meta)
         except Exception:
             pass
 
@@ -2574,10 +3495,12 @@ class Agent:
 
     def _get_tools_schema(self) -> list[dict]:
         """Genera schema tool per il backend corrente."""
-        if self._active_llm.backend in ("openai", "openai_compatible", "groq", "ollama"):
-            return self.tools.to_openai_schema()
+        if self._active_llm.backend in (
+            "openai", "openai_compatible", "groq", "ollama", "codex",
+        ):
+            return self.tools.to_openai_schema(self._active_tool_names)
         elif self._active_llm.backend == "anthropic":
-            return self.tools.to_anthropic_schema()
+            return self.tools.to_anthropic_schema(self._active_tool_names)
         return []
 
     def _resolve_tool_calls(self, response_text: str, chat_text: str | None,
@@ -2826,7 +3749,7 @@ class Agent:
                 return True
             # Check se tocca un file workspace
             workspace_files = {"SOUL.md", "IDENTITY.md", "AGENTS.md", "USER.md",
-                             "TOOLS.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md"}
+                             "TOOLS.md", "MEMORY.md", "HEARTBEAT.md"}
             basename = normalize_workspace_filename(os.path.basename(path))
             if basename in workspace_files:
                 return True

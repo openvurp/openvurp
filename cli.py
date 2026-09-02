@@ -4,7 +4,7 @@ openvurp CLI — Interfaccia a riga di comando professionale.
 Comandi:
     openvurp-cli              Avvia in modalità interattiva
     openvurp-cli chat "..."   Prompt singolo
-    openvurp-cli start        Avvia con tutti i servizi (Telegram, dashboard, gateway)
+    openvurp-cli start        Start with every service (dashboard, gateway)
     openvurp-cli status       Mostra stato agente
     openvurp-cli gateway      Avvia il runtime gateway standalone
     openvurp-cli security     Gestione sicurezza (vault, audit, integrity)
@@ -48,7 +48,6 @@ def main():
     start_p = sub.add_parser("start", help="Start full interactive mode")
     start_p.add_argument("--model", "-m", help="Override modello")
     start_p.add_argument("--backend", "-b", help="Override backend")
-    start_p.add_argument("--no-telegram", action="store_true")
     start_p.add_argument("--dashboard", action="store_true")
     start_p.add_argument("--gateway", action="store_true")
 
@@ -119,8 +118,6 @@ def _run_interactive(args):
         sys.argv.extend(["--model", args.model])
     if hasattr(args, "backend") and args.backend:
         sys.argv.extend(["--backend", args.backend])
-    if hasattr(args, "no_telegram") and args.no_telegram:
-        sys.argv.append("--no-telegram")
     if hasattr(args, "dashboard") and args.dashboard:
         sys.argv.append("--dashboard")
     if hasattr(args, "gateway") and args.gateway:
@@ -164,16 +161,17 @@ def _run_status():
         gateway_port = getattr(config, "GATEWAY_PORT", 8421)
         table.add_row("Gateway", f"[green]http://127.0.0.1:{gateway_port}[/green]" if gateway_enabled else "[dim]Disabilitato[/dim]")
     except Exception:
-        table.add_row("Config", "[red]Errore caricamento[/red]")
+        table.add_row("Config", "[red]Load error[/red]")
 
-    # Telegram
+    # Telegram: solo notifiche in uscita
     telegram_token = os.environ.get("TELEGRAM_TOKEN", "")
     try:
         import config
         telegram_token = telegram_token or getattr(config, "TELEGRAM_TOKEN", "")
     except Exception:
         pass
-    table.add_row("Telegram", "[green]Configurato[/green]" if telegram_token else "[dim]Non configurato[/dim]")
+    table.add_row("Telegram notifications",
+                  "[green]Configured[/green]" if telegram_token else "[dim]Not configured[/dim]")
 
     # Heartbeat
     heartbeat_path = os.path.join(OPENVURP_DIR, "heartbeat.json")
@@ -273,7 +271,7 @@ def _security_vault(args, console):
             return
         vault.auto_unlock()
         vault.set(args.key, args.value)
-        console.print(f"[green]Secret '{args.key}' salvato.[/green]")
+        console.print(f"[green]Secret '{args.key}' saved.[/green]")
 
     elif args.action == "get":
         if not args.key:
@@ -306,7 +304,7 @@ def _security_audit(args, console):
     if args.action == "show":
         events = audit.get_recent(args.n)
         if not events:
-            console.print("[dim]Nessun evento.[/dim]")
+            console.print("[dim]No events.[/dim]")
             return
 
         from rich.table import Table
@@ -336,7 +334,7 @@ def _security_audit(args, console):
     elif args.action == "failures":
         events = audit.get_failures(args.n)
         if not events:
-            console.print("[green]Nessun fallimento registrato.[/green]")
+            console.print("[green]No failures recorded.[/green]")
             return
         for e in events:
             console.print(f"  [{e.get('action')}] {e.get('target', '?')} — {e.get('details', '')[:80]}")
@@ -407,7 +405,7 @@ def _security_rbac(args, console):
             console.print("[red]Uso: openvurp-cli security rbac remove USER_ID[/red]")
             return
         if rbac.remove_user(args.user_id):
-            console.print(f"[green]{args.user_id} rimosso (torna guest).[/green]")
+            console.print(f"[green]{args.user_id} removed (back to guest).[/green]")
         else:
             console.print(f"[dim]{args.user_id} non trovato.[/dim]")
 
@@ -459,7 +457,7 @@ def _run_doctor():
         ("groq", "Groq backend"),
         ("whisper", "Audio (Whisper)"),
         ("playwright", "Browser automation"),
-        ("telegram", "Telegram bot"),
+        ("telegram", "Telegram (notifications)"),
     ]
     for mod, desc in opt_deps:
         try:

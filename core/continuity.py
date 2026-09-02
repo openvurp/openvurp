@@ -21,7 +21,7 @@ class ContinuityPromptBuilder:
         self.journal = journal
 
     def build(self, user_input: str = "", session_type: str = "main",
-              budget_chars: int = 5000) -> str:
+              budget_chars: int = 2000) -> str:
         if session_type != "main":
             return ""
 
@@ -29,9 +29,9 @@ class ContinuityPromptBuilder:
 
         loops = self._rank_open_loops(user_input, self.journal.list_open_loops())
         if loops:
-            sections.append(self._format_open_loops(loops[:6]))
+            sections.append(self._format_open_loops(loops[:3]))
 
-        reflections = self._recent_reflections(limit=6)
+        reflections = self._recent_reflections(limit=2)
         if reflections:
             sections.append(self._format_reflections(reflections))
 
@@ -51,6 +51,8 @@ class ContinuityPromptBuilder:
                 score += 1
             ranked.append((score, loop))
         ranked.sort(key=lambda item: (item[0], item[1].updated_at or item[1].created_at), reverse=True)
+        if keywords:
+            ranked = [item for item in ranked if item[0] > 0]
         return [loop for _, loop in ranked]
 
     def _recent_reflections(self, limit: int) -> list[dict]:

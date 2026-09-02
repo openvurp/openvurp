@@ -78,7 +78,9 @@ roadmap with open items is an invitation, not a weakness.
 - done: Telegram — owner/guest roles, media (photos/voice/docs), inline confirms
 - done: per-channel session isolation
 - done: group-chat privacy rules + chat-id whitelist (private memory never leaks to groups)
-- done: web dashboard — chat + live activity stream + runtime panels, token-gated
+- done: web dashboard — persistent multi-chat + live activity stream + runtime panels, token-gated
+- done: multiplayer rooms — persistent peer profiles, attributed messages, peer review and bounded coordinator synthesis
+- done: token economy — dynamic tool packs, schema-aware budgets, compact route history and per-turn ceilings
 - hardened Telegram pairing
 - Discord, Slack, Signal, email (scaffolding present)
 - dashboard approval controls

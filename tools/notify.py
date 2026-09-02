@@ -38,7 +38,11 @@ def _get_telegram():
         allowed = getattr(cfg, "TELEGRAM_ALLOWED_USERS", [])
         if not token:
             return None, None
-        chat_id = _get_last_chat_id()
+        # L'ultimo chat_id lo scriveva il bot in ENTRATA, che non c'e' piu':
+        # senza un destinatario esplicito la notifica non partirebbe piu'.
+        chat_id = str(getattr(cfg, "TELEGRAM_CHAT_ID", "") or "").strip()
+        if not chat_id:
+            chat_id = _get_last_chat_id()
         if not chat_id and allowed:
             chat_id = str(allowed[0])
         if not chat_id:
@@ -128,6 +132,33 @@ def _send_telegram_voice(token: str, chat_id: str, audio_path: str) -> bool:
         return r.ok
     except Exception:
         return False
+
+
+def _send_telegram_poll(token: str, chat_id: str, question: str,
+                        options: list, is_anonymous: bool = True,
+                        allows_multiple_answers: bool = False) -> dict:
+    """Invia un sondaggio nativo Telegram (sendPoll).
+
+    Ritorna il JSON della risposta Telegram (dict). In caso di errore
+    di rete ritorna {"ok": False, "error": "..."}.
+    """
+    import requests as _requests
+    url = f"https://api.telegram.org/bot{token}/sendPoll"
+    payload = {
+        "chat_id": chat_id,
+        "question": question,
+        "options": options,
+        "is_anonymous": bool(is_anonymous),
+        "allows_multiple_answers": bool(allows_multiple_answers),
+    }
+    try:
+        r = _requests.post(url, json=payload, timeout=15)
+        try:
+            return r.json()
+        except Exception:
+            return {"ok": False, "error": f"HTTP {r.status_code}: {r.text[:200]}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 def notify_handler(message: str, urgent: bool = False,
@@ -237,6 +268,80 @@ def notify_photo_handler(path: str, caption: str = "") -> ToolResult:
     return notify_file_handler(path=path, caption=caption, force_document=False)
 
 
+def notify_poll_handler(chat_id: str = "", question: str = "",
+                        options: list | None = None,
+                        is_anonymous: bool = True,
+                        allows_multiple_answers: bool = False) -> ToolResult:
+    """Invia un sondaggio nativo Telegram (sendPoll).
+
+    - `chat_id`: se vuoto usa l'ultimo chat noto o il primo utente consentito.
+    - `options`: lista di 2-10 stringhe (1-100 caratteri ciascuna).
+    - `is_anonymous`: True di default.
+    - `allows_multiple_answers`: False di default.
+    """
+    if not question.strip():
+        return ToolResult.fail("Domanda del sondaggio vuota", error_type=ErrorType.VALIDATION)
+    if not options or len(options) < 2:
+        return ToolResult.fail(
+            "Servono almeno 2 opzioni (Telegram ne accetta fino a 10)",
+            error_type=ErrorType.VALIDATION,
+        )
+    if len(options) > 10:
+        return ToolResult.fail(
+            f"Troppe opzioni ({len(options)}): Telegram ne accetta al massimo 10",
+            error_type=ErrorType.VALIDATION,
+        )
+    for o in options:
+        if len(str(o)) > 100:
+            return ToolResult.fail(
+                f"Opzione troppo lunga ({len(str(o))} caratteri, max 100): {o!r}",
+                error_type=ErrorType.VALIDATION,
+            )
+
+    token, default_chat = _get_telegram()
+    if not token:
+        return ToolResult.fail(
+            "Telegram non configurato. Serve TELEGRAM_TOKEN e TELEGRAM_ALLOWED_USERS in .env o nell'ambiente",
+            error_type=ErrorType.DEPENDENCY,
+        )
+
+    target_chat = (chat_id or default_chat or "").strip()
+    if not target_chat:
+        return ToolResult.fail(
+            "Nessun chat_id: specifica chat_id oppure configura TELEGRAM_ALLOWED_USERS",
+            error_type=ErrorType.VALIDATION,
+        )
+
+    # Le opzioni vanno serializzate come JSON-stringa (Telegram API)
+    options_json = json.dumps([str(o) for o in options], ensure_ascii=False)
+    resp = _send_telegram_poll(
+        token, target_chat, question, options_json,
+        is_anonymous=is_anonymous,
+        allows_multiple_answers=allows_multiple_answers,
+    )
+
+    if not resp.get("ok"):
+        return ToolResult.fail(
+            f"Sondaggio non inviato: {resp.get('description') or resp.get('error') or 'errore sconosciuto'}",
+            error_type=ErrorType.RUNTIME,
+        )
+
+    result = resp.get("result") or {}
+    message_id = result.get("message_id")
+    chat_obj = result.get("chat") or {}
+    chat_title = chat_obj.get("title") or chat_obj.get("username") or str(target_chat)
+    return ToolResult.ok(
+        json.dumps({
+            "ok": True,
+            "message_id": message_id,
+            "chat_id": target_chat,
+            "chat_title": chat_title,
+            "question": question,
+            "options_count": len(options),
+        }, ensure_ascii=False)
+    )
+
+
 # ── Tool definitions ──
 
 NOTIFY_TOOL = Tool(
@@ -331,4 +436,43 @@ NOTIFY_PHOTO_TOOL = Tool(
     },
     handler=notify_photo_handler,
     timeout=60,
+)
+
+NOTIFY_POLL_TOOL = Tool(
+    name="notify_poll",
+    description=(
+        "Invia un sondaggio nativo Telegram (sendPoll API). "
+        "Mostra il sondaggio come card cliccabile con barre di voto. "
+        "chat_id opzionale (default: ultima chat nota). 2-10 opzioni, 1-100 char l'una. "
+        "is_anonymous True di default. allows_multiple_answers False di default."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "chat_id": {
+                "type": "string",
+                "description": "ID della chat (numero negativo per gruppi, es. '-100...'). Vuoto = ultima chat nota o primo utente consentito.",
+            },
+            "question": {
+                "type": "string",
+                "description": "Domanda del sondaggio (1-300 caratteri).",
+            },
+            "options": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Lista di 2-10 opzioni (1-100 caratteri ciascuna).",
+            },
+            "is_anonymous": {
+                "type": "boolean",
+                "description": "Se True i voti sono anonimi (default True).",
+            },
+            "allows_multiple_answers": {
+                "type": "boolean",
+                "description": "Se True si possono scegliere più opzioni (default False).",
+            },
+        },
+        "required": ["question", "options"],
+    },
+    handler=notify_poll_handler,
+    timeout=20,
 )

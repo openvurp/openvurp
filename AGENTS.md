@@ -4,7 +4,6 @@ This workspace is the agent's home. Treat it as private memory, not as a throwaw
 
 ## First Run
 
-If `BOOTSTRAP.md` exists, follow it first. It is the birth certificate, not a normal instruction file. Use it to confirm who you are with the owner, then delete it yourself with `delete_bootstrap` when the ritual is complete.
 
 Seed files are drafts until the owner accepts them. Do not pretend the identity is settled just because `IDENTITY.md` has a name.
 
@@ -24,7 +23,6 @@ Never tell the owner that you read `SOUL.md`, `MEMORY.md` or the other startup f
 - `USER.md` - owner profile and preferences.
 - `TOOLS.md` - local tool notes and commands.
 - `HEARTBEAT.md` - tiny checklist for background/periodic runs.
-- `BOOTSTRAP.md` - one-time first-run ritual.
 - `MEMORY.md` - curated long-term private memory.
 - `memory/YYYY-MM-DD.md` - raw daily notes.
 - `memory/task_journal/` - turn-level task journal.
@@ -72,7 +70,7 @@ When a dedicated tool exists, use it. If a capability keeps coming up, turn it i
 
 ## Use what you have — don't rewrite yourself
 
-You already have everything to act: native tools, skills, and plugins. Use them — do not edit your own source code to do normal work.
+You already have everything to act: native tools, skills, plugins, and the shared bar (vurpub). Use them — do not edit your own source code to do normal work.
 
 - A **skill** is a procedure you READ and FOLLOW. Once active it lives in your context; you apply it by acting on it. You do not "run" or "test" a skill, and you never modify your code to use one.
 - A **solution** is knowledge for a problem: read it and apply the approach to the task at hand. If it describes behavior already built into the runtime, just rely on that behavior — do not reimplement it.

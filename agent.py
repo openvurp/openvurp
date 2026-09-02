@@ -19,6 +19,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.syntax import Syntax
+from rich.live import Live
+from rich.markdown import Markdown
 from rich import box
 
 
@@ -123,17 +125,19 @@ class UI:
         self._spinner_thread = None
         self._streaming = False
         self._stream_line_start = True
+        self._response_buffer = ""
+        self._response_live = None
         self._model = "?"
         self._backend = "?"
         # Output prompt-safe: mentre sei fermo sul prompt (box disegnato), gli
-        # output asincroni (Telegram/heartbeat) vengono messi in coda e stampati
+        # output asincroni (heartbeat/notifiche) vengono messi in coda e stampati
         # appena premi Invio, così il box non viene mai rotto.
         self._at_prompt = False
         self._pending_notes: list = []
         self._notes_lock = threading.Lock()
 
         # prompt_toolkit: box dell'input con menu slash + autocompletamento.
-        # patch_stdout gestisce l'output asincrono (heartbeat/Telegram) da solo.
+        # patch_stdout gestisce l'output asincrono (heartbeat) da solo.
         self._pt_session = None
         if _PT_OK:
             try:
@@ -169,7 +173,7 @@ class UI:
 
     # ── Welcome & Goodbye ──
 
-    def welcome(self, model: str, backend: str):
+    def welcome(self, model: str, backend: str, hint: str = ""):
         self._model = model
         self._backend = backend
 
@@ -195,10 +199,13 @@ class UI:
         info.append("open", style="bold white")
         info.append("vurp", style=f"bold {BRAND}")
         info.append("!\n\n", style=f"bold {BRAND}")
-        info.append("  /", style=ACCENT)
-        info.append(" for commands · ", style="dim")
-        info.append("/setup", style=ACCENT)
-        info.append(" to reconfigure\n\n", style="dim")
+        if hint:
+            info.append("  " + hint + "\n\n", style="dim")
+        else:
+            info.append("  /", style=ACCENT)
+            info.append(" for commands · ", style="dim")
+            info.append("/setup", style=ACCENT)
+            info.append(" to reconfigure\n\n", style="dim")
         info.append(f"  model: {model} · {backend}\n", style="dim")
         info.append(f"  cwd:   {OPENVURP_DIR}", style="dim")
 
@@ -350,52 +357,59 @@ class UI:
 
     # ── Response display ──
 
+    def _response_renderable(self, text: str):
+        """Risposta Markdown con il bullet openvurp allineato al contenuto."""
+        grid = Table.grid(padding=(0, 1), expand=True)
+        grid.add_column(width=1, no_wrap=True)
+        grid.add_column(ratio=1)
+        grid.add_row(Text(BULLET, style="white"), Markdown(text or " "))
+        return grid
+
     def start_response(self):
-        # Stile Claude Code: bullet + testo sulla stessa riga
-        sys.stdout.write(f"\n\033[97m{BULLET}\033[0m ")
-        sys.stdout.flush()
+        # Rich Live ridisegna il Markdown parziale a ogni delta: lo streaming
+        # resta reale ma marker come **, ``` e # non rimangono grezzi.
+        if self._response_live is not None:
+            try:
+                self._response_live.stop()
+            except Exception:
+                pass
+        self._response_buffer = ""
         self._streaming = True
-        self._stream_line_start = False
+        self._response_live = Live(
+            self._response_renderable(""),
+            console=self.console,
+            refresh_per_second=20,
+            transient=True,
+            auto_refresh=False,
+        )
+        self._response_live.start(refresh=True)
 
     def stream_token(self, text: str):
-        """Scrive un delta di testo in streaming reale (nessun delay artificiale)."""
-        out = []
-        for ch in text:
-            if ch == '\n':
-                out.append("\n")
-                self._stream_line_start = True
-            else:
-                if self._stream_line_start:
-                    out.append("  ")
-                    self._stream_line_start = False
-                out.append(ch)
-        sys.stdout.write("".join(out))
-        sys.stdout.flush()
+        """Aggiorna il Markdown con un delta reale, senza typing artificiale."""
+        if not text:
+            return
+        self._response_buffer += str(text)
+        if self._response_live is not None:
+            self._response_live.update(
+                self._response_renderable(self._response_buffer), refresh=True,
+            )
 
     def stream_text(self, text: str):
-        """Mostra testo completo (stesso formato dello streaming, senza typing finto)."""
+        """Mostra testo completo usando lo stesso renderer Markdown live."""
         self.stream_token(text)
 
     def end_response(self):
         if self._streaming:
-            sys.stdout.write("\n")
-            sys.stdout.flush()
+            live = self._response_live
+            self._response_live = None
+            if live is not None:
+                live.stop()
+            self.console.print(self._response_renderable(self._response_buffer))
             self._streaming = False
 
     def openvurp_say(self, text: str):
-        """Quick message without typing effect."""
-        lines = text.split('\n')
-        first = True
-        self.console.print()
-        for line in lines:
-            if first:
-                self.console.print(f"[white]{BULLET}[/white] {line}")
-                first = False
-            elif line.strip():
-                self.console.print(f"  {line}")
-            else:
-                self.console.print()
-        self.console.print()
+        """Messaggio completo, renderizzato con lo stesso Markdown della chat."""
+        self.console.print(self._response_renderable(str(text or "")))
 
     # ── Tool display ──
 

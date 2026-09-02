@@ -143,6 +143,88 @@ def wrap_text_block(text: str, width: int, prefix: str = "") -> list[str]:
     return lines
 
 
+def markdown_to_tui_lines(text: str, width: int) -> list[tuple[str, int]]:
+    """Render Markdown leggibile nella TUI curses senza mostrare i marker.
+
+    Curses non offre un DOM: manteniamo quindi la struttura (titoli, liste,
+    citazioni e codice) e assegniamo uno stile per riga. Il parsing viene
+    rieseguito sul buffer a ogni refresh, quindi funziona anche durante lo
+    streaming e con fence ancora aperte.
+    """
+    width = max(12, width)
+    rendered: list[tuple[str, int]] = []
+    in_code = False
+
+    def inline(raw: str) -> tuple[str, int]:
+        value = str(raw or "")
+        has_bold = bool(re.search(r"(?:\*\*|__)(?=\S)", value))
+        has_code = bool(re.search(r"`[^`]+`", value))
+        value = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"[immagine: \1]", value)
+        value = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r"\1 (\2)", value)
+        value = re.sub(r"`([^`]+)`", r"\1", value)
+        value = re.sub(r"\*\*([^*]+)\*\*", r"\1", value)
+        value = re.sub(r"__([^_]+)__", r"\1", value)
+        value = re.sub(r"~~([^~]+)~~", r"\1", value)
+        value = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", value)
+        value = re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"\1", value)
+        value = re.sub(r"\\([\\`*{}\[\]()#+.!_>-])", r"\1", value)
+        return value, 10 if has_code else 11 if has_bold else 9
+
+    raw_lines = sanitize_renderable_text(str(text or "")).splitlines()
+    if not raw_lines:
+        return [("", 9)]
+    for raw in raw_lines:
+        fence = re.match(r"^\s*```\s*([\w.+-]*)\s*$", raw)
+        if fence:
+            if not in_code and fence.group(1):
+                rendered.append((f"code · {fence.group(1)}", 10))
+            in_code = not in_code
+            continue
+        if in_code:
+            for line in wrap_text_block(raw, max(12, width - 4), prefix="    "):
+                rendered.append((line, 10))
+            continue
+        if not raw.strip():
+            rendered.append(("", 9))
+            continue
+        heading = re.match(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$", raw)
+        if heading:
+            value, _ = inline(heading.group(2))
+            for line in wrap_text_block(value, width):
+                rendered.append((line, 12))
+            continue
+        if re.match(r"^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$", raw):
+            rendered.append(("─" * min(width, 48), 2))
+            continue
+        quote = re.match(r"^\s{0,3}>\s?(.*)$", raw)
+        if quote:
+            value, _ = inline(quote.group(1))
+            for line in wrap_text_block(value, max(12, width - 2), prefix="│ "):
+                rendered.append((line, 2))
+            continue
+        bullet = re.match(r"^\s*[-+*]\s+(?:\[[ xX]\]\s+)?(.+)$", raw)
+        ordered = re.match(r"^\s*(\d+)[.)]\s+(.+)$", raw)
+        if bullet or ordered:
+            marker = "• " if bullet else f"{ordered.group(1)}. "
+            body = bullet.group(1) if bullet else ordered.group(2)
+            value, style = inline(body)
+            wrapped = wrap_text_block(value, max(12, width - len(marker)))
+            for idx, line in enumerate(wrapped):
+                prefix = marker if idx == 0 else " " * len(marker)
+                rendered.append(((prefix + line)[:width], style))
+            continue
+        if re.match(r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*$", raw):
+            continue
+        if "|" in raw and raw.count("|") >= 2:
+            cells = [inline(cell.strip())[0] for cell in raw.strip().strip("|").split("|")]
+            rendered.append((" │ ".join(cells)[:width], 10))
+            continue
+        value, style = inline(raw)
+        for line in wrap_text_block(value, width):
+            rendered.append((line, style))
+    return rendered
+
+
 def parse_ollama_models(output: str, current_model: str) -> list[str]:
     models: list[str] = []
     for raw in output.splitlines():
@@ -2035,8 +2117,7 @@ class ExperimentalTUI:
 
         if entry.kind == "assistant":
             lines.append(("", 0))
-            for line in wrap_text_block(entry.body, width):
-                lines.append((line, 9))
+            lines.extend(markdown_to_tui_lines(entry.body, width))
             lines.append(("", 0))
             return lines
 
@@ -2571,6 +2652,12 @@ class ExperimentalTUI:
                 attr = curses.color_pair(8)
             elif color == 9:
                 attr = curses.color_pair(9)
+            elif color == 10:
+                attr = curses.color_pair(7) | curses.A_DIM
+            elif color == 11:
+                attr = curses.color_pair(9) | curses.A_BOLD
+            elif color == 12:
+                attr = curses.color_pair(4) | curses.A_BOLD
             try:
                 stdscr.addnstr(chat_top + idx, 0, line, width - 1, attr)
             except curses.error:

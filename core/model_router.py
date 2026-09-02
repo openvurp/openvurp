@@ -22,6 +22,22 @@ class RoutedModelChoice:
     strategy: str
 
 
+@dataclass
+class ChatModelChoice:
+    """Scelta economica per un turno della chat principale.
+
+    Il classificatore e' deliberatamente locale e deterministico: spendere una
+    chiamata LLM per decidere quale LLM chiamare annullerebbe buona parte del
+    risparmio.
+    """
+
+    backend: str
+    model: str
+    tier: str
+    reason: str
+    strategy: str = "automatic_cost_router"
+
+
 def _cfg(name: str, default=""):
     value = getattr(cfg, name, default)
     return value if value not in (None, "") else default
@@ -30,7 +46,8 @@ def _cfg(name: str, default=""):
 def _backend_looks_cloud(backend: str, model: str) -> bool:
     backend = (backend or "").strip().lower()
     model = (model or "").strip().lower()
-    if backend in {"openai", "anthropic", "groq", "openai_compatible"}:
+    if backend in {"openai", "anthropic", "groq", "openai_compatible",
+                   "codex", "claude_cli", "claude"}:
         return True
     return "cloud" in model
 
@@ -45,6 +62,11 @@ def _has_backend_credentials(backend: str) -> bool:
         return bool(_cfg("OPENAI_API_KEY", _cfg("LLM_API_KEY", "")))
     if backend == "anthropic":
         return bool(_cfg("ANTHROPIC_API_KEY", _cfg("LLM_API_KEY", "")))
+    if backend in {"codex", "claude_cli", "claude"}:
+        from core.cli_backends import claude_login_status, codex_login_status
+        if backend == "codex":
+            return codex_login_status(_cfg("CODEX_CLI", "codex"))[0]
+        return claude_login_status(_cfg("CLAUDE_CLI", "claude"))[0]
     if backend == "openai_compatible":
         return bool(_cfg("OPENAI_COMPATIBLE_BASE_URL", _cfg("LLM_BASE_URL", "")))
     return False
@@ -118,6 +140,72 @@ def _task_is_deep_reasoning(task: str, deliverable: str = "") -> bool:
         "why", "perché", "postmortem", "strategy",
     )
     return any(keyword in text for keyword in keywords) or len(text) > 900
+
+
+_CHAT_DEEP_PATTERNS = (
+    "architettura", "architecture", "security review", "threat model",
+    "migrazione", "migration", "root cause", "postmortem", "refactor completo",
+    "analizza il progetto", "analizza tutto", "risolvi ogni cosa", "trade-off",
+    "strategia completa", "piano completo", "sistema distribuito",
+)
+
+
+def _chat_needs_deep_model(prompt: str) -> bool:
+    """Conservativo: il modello medio si usa solo quando porta valore reale."""
+    text = " ".join(str(prompt or "").lower().split())
+    if len(text) >= 1400:
+        return True
+    hits = sum(pattern in text for pattern in _CHAT_DEEP_PATTERNS)
+    return hits >= 1
+
+
+def route_chat_prompt(prompt: str) -> ChatModelChoice:
+    """Sceglie il modello per ``Automatico economico`` senza chiamate extra.
+
+    Di default usa soltanto il login Codex: Luna copre i turni normali, mentre
+    Terra viene riservato ai prompt chiaramente complessi. Se Codex non e'
+    autenticato, ripiega sul login Claude.ai; non seleziona API a consumo o
+    Ollama implicitamente.
+    """
+    from core.cli_backends import claude_login_status, codex_login_status
+
+    codex_binary = str(_cfg("CODEX_CLI", "codex") or "codex")
+    codex_ok, _ = codex_login_status(codex_binary)
+    if codex_ok:
+        max_tier = str(_cfg("AUTO_ROUTER_MAX_TIER", "terra") or "terra").lower()
+        deep = _chat_needs_deep_model(prompt) and max_tier in {"terra", "sol"}
+        if deep:
+            return ChatModelChoice(
+                backend="codex",
+                model=str(_cfg("AUTO_ROUTER_DEEP_MODEL", "gpt-5.6-terra")),
+                tier="deep",
+                reason="prompt complesso: uso Terra solo per questo turno",
+            )
+        return ChatModelChoice(
+            backend="codex",
+            model=str(_cfg("AUTO_ROUTER_FAST_MODEL", "gpt-5.6-luna")),
+            tier="fast",
+            reason="Luna e' sufficiente: priorita' a velocita' e consumo basso",
+        )
+
+    claude_binary = str(_cfg("CLAUDE_CLI", "claude") or "claude")
+    claude_ok, _ = claude_login_status(claude_binary)
+    if claude_ok:
+        return ChatModelChoice(
+            backend="claude_cli",
+            model=str(_cfg("CLAUDE_CLI_MODEL", "sonnet")),
+            tier="fallback",
+            reason="Codex non disponibile: uso l'abbonamento Claude.ai",
+            strategy="automatic_subscription_fallback",
+        )
+
+    return ChatModelChoice(
+        backend=str(_cfg("LLM_BACKEND", "ollama")),
+        model=str(_cfg("LLM_MODEL", "")),
+        tier="fallback",
+        reason="nessun CLI in abbonamento disponibile: uso il motore globale",
+        strategy="automatic_global_fallback",
+    )
 
 
 def _configured_route(prefix: str) -> tuple[str, str]:

@@ -2,8 +2,6 @@
 openvurp 4.0 — Entry point.
 
 Integra core/ per tool system, reasoning, safety, observability.
-Telegram parte automaticamente se TELEGRAM_TOKEN e configurato.
-Sessioni separate per CLI e Telegram.
 """
 
 import sys
@@ -32,20 +30,31 @@ def parse_args():
     parser.add_argument("prompt", nargs="*", help="Direct prompt from the command line")
     parser.add_argument("--model", "-m", help="Override LLM model")
     parser.add_argument("--backend", "-b", help="Override backend (ollama/groq/openai/anthropic)")
-    parser.add_argument("--no-telegram", action="store_true", help="Do not start Telegram")
     parser.add_argument("--dashboard", action="store_true", help="Start web dashboard")
     parser.add_argument("--gateway", action="store_true", help="Start local HTTP runtime gateway")
     parser.add_argument("--doctor", action="store_true", help="Print runtime diagnostics and exit")
     parser.add_argument("--doctor-fix", action="store_true", help="Apply full runtime bootstrap, then exit")
     parser.add_argument("--headless", action="store_true",
-                        help="Start services (dashboard/gateway/telegram/heartbeat) without interactive loop — for Docker/server")
+                        help="Start services (dashboard/gateway/heartbeat) without interactive loop — for Docker/server")
     parser.add_argument("--setup", action="store_true",
-                        help="Run guided setup (backend/model/Telegram), then start")
+                        help="Run guided setup (backend/model/notifications), then start")
+    parser.add_argument("--menu", action="store_true",
+                        help="Always show the startup menu, even if disabled in .env")
+    parser.add_argument("--no-menu", action="store_true",
+                        help="Skip the startup menu and go straight to the chat")
+    parser.add_argument("--cli", action="store_true",
+                        help="Use the terminal chat instead of the web interface")
+    parser.add_argument("--no-browser", action="store_true",
+                        help="Do not open the browser automatically")
     return parser.parse_args()
 
 
 # Lock per accesso thread-safe all'agent
 _agent_lock = threading.Lock()
+
+# In modalita' web il terminale serve solo a leggere l'indirizzo: i servizi
+# si riassumono in una riga invece di annunciarsi uno per uno.
+QUIET_STARTUP = False
 
 
 def finalize_channel_response(text: str, source: str) -> str:
@@ -53,8 +62,77 @@ def finalize_channel_response(text: str, source: str) -> str:
     return format_callback_response(text, source=source)
 
 
+def render_swarm_command(text, agent) -> str:
+    """Comandi dello sciame come testo, per i canali senza console.
+
+    Stessa semantica della CLI: a uno (`@nome` o `/swarm ask`), a tutti
+    (`/swarm all`) o fra loro (`/swarm discuss`).
+    """
+    swarm = getattr(agent, "swarm", None)
+    if swarm is None:
+        return "Sciame non attivo (SWARM_ENABLED=false)."
+
+    from core.swarm import Swarm, SwarmError
+
+    raw = (text or "").strip()
+    if raw.startswith("@") and " " in raw:
+        target, message = raw[1:].split(" ", 1)
+        raw = f"/swarm ask {target} {message}"
+
+    parts = raw.split(maxsplit=2)
+    sub = parts[1].lower() if len(parts) > 1 else ""
+    rest = parts[2] if len(parts) > 2 else ""
+
+    try:
+        if not sub or sub in ("list", "ls"):
+            return swarm.roster_text() + "\n\n" + SWARM_HELP
+        if sub in ("help", "?"):
+            return SWARM_HELP
+        if sub in ("new", "spawn"):
+            name, _, role = rest.partition(" ")
+            if not name or not role.strip():
+                return "Uso: /swarm new <nome> <ruolo>"
+            return "Convocato: " + swarm.spawn(
+                name, role.strip()).describe()
+        if sub in ("bye", "dismiss", "kill"):
+            return "Congedato: " + swarm.dismiss(rest.strip())
+        if sub == "log":
+            entries = swarm.transcript(int(rest) if rest.strip().isdigit() else 20)
+            if not entries:
+                return "Nessuno scambio registrato."
+            return "\n".join(
+                f"{e.get('at', '')[11:19]} {e.get('from')} → {e.get('to')}: "
+                f"{str(e.get('text', ''))[:300]}" for e in entries
+            )
+        if sub == "ask":
+            name, _, message = rest.partition(" ")
+            if not name or not message.strip():
+                return "Uso: /swarm ask <nome> <messaggio>"
+            return f"{name}: " + swarm.ask(name, message.strip(), sender="utente")
+        if sub == "all":
+            if not rest.strip():
+                return "Uso: /swarm all <messaggio>"
+            replies = swarm.broadcast(rest.strip(), sender="utente")
+            return "\n\n".join(f"{who}: {txt}" for who, txt in replies.items())
+        if sub in ("discuss", "discussione"):
+            rounds, topic = 2, rest.strip()
+            first, _, tail = topic.partition(" ")
+            if first.isdigit() and tail.strip():
+                rounds, topic = int(first), tail.strip()
+            if not topic:
+                return "Uso: /swarm discuss [giri] <argomento>"
+            return Swarm.render_discussion(
+                swarm.discuss(topic, rounds=rounds, sender="utente")
+            )
+        return f"Sottocomando sconosciuto: {sub}\n\n" + SWARM_HELP
+    except SwarmError as exc:
+        return str(exc)
+    except Exception as exc:
+        return f"Errore sciame: {exc}"
+
+
 def render_command(text, agent, openvurp_dir, memory_dir):
-    """Rende l'output di un comando-pannello come testo (per Telegram & co).
+    """Rende l'output di un comando-pannello come testo (per chi non ha una console).
 
     Stessi render della CLI → ogni canale vede lo stesso pannello reale.
     Ritorna None se non è un comando-pannello riconosciuto.
@@ -95,6 +173,8 @@ def render_command(text, agent, openvurp_dir, memory_dir):
             return agent.forge.render_status() if getattr(agent, "forge", None) else "Forge not available."
         if t.startswith("/curiosita") or t.startswith("/curiosity"):
             return agent.curiosity.render_status() if getattr(agent, "curiosity", None) else "Curiosity not available."
+        if t.startswith("/swarm") or (text or "").startswith("@"):
+            return render_swarm_command(text, agent)
         if t.startswith("/integrity"):
             from core.security.integrity import IntegrityChecker
             return IntegrityChecker(openvurp_dir).verify().message
@@ -133,17 +213,6 @@ def check_restarted(openvurp_dir: str) -> str:
         return ""
 
 
-def should_run_bootstrap(openvurp_dir: str, is_restart: bool = False) -> bool:
-    """BOOTSTRAP.md è la fonte di verità per capire se l'agente è appena nato.
-    Ma se è un riavvio del watcher, non è un primo avvio."""
-    bootstrap_path = os.path.join(openvurp_dir, "BOOTSTRAP.md")
-    if not os.path.exists(bootstrap_path):
-        return False
-    if is_restart:
-        return False
-    return True
-
-
 def read_identity_name(openvurp_dir: str, load_file_fn) -> str:
     """Estrae il nome agente da IDENTITY.md se presente."""
     identity_path = os.path.join(openvurp_dir, "IDENTITY.md")
@@ -166,328 +235,6 @@ def read_identity_name(openvurp_dir: str, load_file_fn) -> str:
     return ""
 
 
-def start_telegram_background(agent, ui, token):
-    """Avvia Telegram in background con rate limiting e sessioni separate."""
-    try:
-        from channels.telegram import TelegramChannel
-    except ImportError:
-        ui.error("python-telegram-bot not installed. Telegram disabled.")
-        return None
-
-    from core.rate_limit import RateLimiter
-    rate_limiter = RateLimiter(cooldown_seconds=2.0, max_burst=5, burst_window=60)
-
-    try:
-        telegram = TelegramChannel(token=token, on_error=ui.error)
-    except ValueError as e:
-        ui.error(str(e))
-        return None
-
-    if hasattr(agent, "gateway"):
-        def announce_to_telegram(route, text):
-            telegram.send(
-                text,
-                chat_id=getattr(route, "chat_id", "") or None,
-                thread_id=getattr(route, "thread_id", "") or "",
-            )
-        agent.gateway.register_announcer("telegram", announce_to_telegram)
-
-    import config as _tg_config
-    from agent import OPENVURP_DIR, MEMORY_DIR, load_file
-    from core.group_chat import GroupChatBuffer
-    allowed_users = getattr(_tg_config, 'TELEGRAM_ALLOWED_USERS', [])
-    _group_buffer = GroupChatBuffer(  # memoria per gruppo, persistente su disco
-        maxlen=50,
-        persist_path=os.path.join(MEMORY_DIR, "group_memory.json"),
-    )
-
-    def handle_message(msg):
-        """Processa messaggi Telegram con sessione separata."""
-        text = msg.text
-        sender = msg.sender or "Telegram"
-        raw = msg.raw
-        user_id = None
-        if hasattr(raw, 'message') and raw.message and raw.message.from_user:
-            user_id = raw.message.from_user.id
-        elif isinstance(raw, dict):
-            user_id = raw.get("message", {}).get("from", {}).get("id")
-        actor_id = f"telegram:{user_id}" if user_id is not None else f"telegram:{sender}"
-
-        # ── Gruppo: MEMORIZZA tutto e, se non sei taggato, silenzio SUBITO ──
-        # Registra ogni messaggio (di chiunque, owner o no) PRIMA di ogni filtro,
-        # così l'agente "legge tutto" il gruppo. Se non è interpellato esce qui:
-        # il messaggio resta in memoria ma niente rate-limit, parsing comandi o
-        # rumore sul CLI — e soprattutto nessuna risposta indesiderata al gruppo.
-        if getattr(msg, "chat_type", "private") in ("group", "supergroup"):
-            # Whitelist gruppi: se configurata, partecipa SOLO ai gruppi elencati.
-            # Fuori whitelist = ignora del tutto (niente risposta, niente memoria).
-            # Stampa il chat_id una volta per gruppo così l'owner può aggiungerlo.
-            _wl = getattr(_tg_config, "TELEGRAM_GROUP_WHITELIST", []) or []
-            _cid = str(msg.chat_id or "")
-            if _wl and _cid not in {str(x) for x in _wl}:
-                _seen = getattr(handle_message, "_wl_hinted", None)
-                if _seen is None:
-                    _seen = set()
-                    handle_message._wl_hinted = _seen
-                if _cid and _cid not in _seen:
-                    _seen.add(_cid)
-                    ui.console.print(
-                        f"  [yellow][gruppo fuori whitelist] chat_id={_cid} — "
-                        f"aggiungilo a TELEGRAM_GROUP_WHITELIST in .env per "
-                        f"farlo partecipare.[/yellow]"
-                    )
-                return None  # gruppo non autorizzato: ignorato del tutto
-            if msg.chat_id:
-                _group_buffer.add(str(msg.chat_id), sender, text)
-                # Roster: impara chi c'è nel gruppo (per sapere chi c'è e taggarlo)
-                _group_buffer.note_person(str(msg.chat_id), sender, getattr(msg, "username", ""))
-            _grp_mode = getattr(_tg_config, "TELEGRAM_GROUP_MODE", "mention")
-            if not getattr(msg, "addressed", True) and _grp_mode != "all":
-                # Non taggato (@bot o reply). Due vie per intervenire comunque:
-                #  1) il NOME dell'agente compare nel testo ("Luna, che dici?"):
-                #     riflesso umano, deterministico, vale in OGNI modalità.
-                #  2) modalità 'natural': un modello-guardiano piccolo decide se
-                #     è naturale intervenire, con cooldown per non essere molesto.
-                from core.group_chat import (
-                    name_mentioned, decide_intervention, get_decider_llm,
-                )
-                _name = read_identity_name(OPENVURP_DIR, load_file)
-                _join = bool(_name) and name_mentioned(text, _name)
-                if not _join and _grp_mode == "natural" and _cid:
-                    _cool = getattr(_tg_config, "TELEGRAM_GROUP_COOLDOWN", 90)
-                    if _group_buffer.cooldown_ok(_cid, _cool):
-                        _decider = get_decider_llm(fallback=agent.llm)
-                        _join = decide_intervention(
-                            _decider, _name, _group_buffer.recent(_cid),
-                            sender, text,
-                        )
-                if not _join:
-                    # Feedback sul CLI: il messaggio resta in memoria anche se taccio.
-                    ui.console.print(
-                        f"  [dim][gruppo] memorizzato (silenzio): {sender}: {text[:60]}[/dim]"
-                    )
-                    return ""  # ambient: memorizzato, nessuna risposta
-                msg.addressed = True  # decide di intervenire → flusso di risposta
-
-        # Filtro user_id
-        #   PRIVATO: solo gli owner ricevono risposta (anti-spam da estranei).
-        #   GRUPPO: chiunque può ricevere risposta, ma come GUEST — RBAC lo tiene
-        #   a "solo chat" (niente shell/file/web). Così natural/mention possono
-        #   partecipare alla conversazione del gruppo, non solo all'owner.
-        _in_group = getattr(msg, "chat_type", "private") in ("group", "supergroup")
-        if allowed_users:
-            if user_id not in allowed_users and not _in_group:
-                return None  # privato da non-owner: ignora (resta in memoria)
-        elif user_id is not None and not getattr(handle_message, "_hinted", False):
-            # Lista vuota = nessun owner riconosciuto: su Telegram sei "guest"
-            # (niente web/tool). Mostra l'ID da mettere in .env, una volta sola.
-            handle_message._hinted = True
-            ui.console.print(
-                f"  [yellow]Telegram: nessun owner configurato — {sender} (id {user_id}) "
-                f"opera come guest.[/yellow]\n"
-                f"  [dim]Per pieni permessi aggiungi in .env: "
-                f"TELEGRAM_ALLOWED_USERS={user_id}[/dim]"
-            )
-
-        allowed_channel, reason = agent.rbac.check_channel(actor_id, "telegram")
-        if not allowed_channel:
-            return reason
-
-        # Comandi speciali
-        if text.lower().startswith('/help'):
-            return (
-                "Comandi disponibili:\n"
-                "/start — avvia o saluta\n"
-                "/help — questa lista\n"
-                "/status — modello, backend, uptime, token\n"
-                "/doctor — diagnosi runtime/workspace\n"
-                "/setup — bootstrap runtime serio\n"
-                "/memory — mostra memoria\n"
-                "/skills — mostra skill attive\n"
-                "/restart — riavvia openvurp\n\n"
-                "Oppure scrivi qualsiasi cosa e ti rispondo!"
-            )
-
-        if text.lower().startswith('/status'):
-            import time as _time
-            _uptime = int(_time.time() - agent._start_time) if hasattr(agent, '_start_time') else 0
-            _h, _rem = divmod(_uptime, 3600)
-            _m, _s = divmod(_rem, 60)
-            _tokens = getattr(agent, 'total_tokens', 0)
-            return (
-                f"Modello: {_tg_config.LLM_MODEL}\n"
-                f"Backend: {_tg_config.LLM_BACKEND}\n"
-                f"Uptime: {_h}h {_m}m {_s}s\n"
-                f"Token usati: {_tokens}"
-            )
-
-        if text.lower().startswith('/setup'):
-            from core.doctor import fix_runtime_issues
-            report = fix_runtime_issues(OPENVURP_DIR, allowed_telegram_users=allowed_users)
-            agent.rbac = agent.rbac.__class__(MEMORY_DIR)
-            return finalize_channel_response(report.render(), source="telegram")
-
-        # Comandi-pannello (anima/growth/diary/patti/specchio/fili/sensi/progetti/
-        # fucina/curiosita/integrity/doctor/memory/skills): stesso output della CLI.
-        if text.strip().startswith('/'):
-            panel = render_command(text, agent, OPENVURP_DIR, MEMORY_DIR)
-            if panel is not None:
-                return finalize_channel_response(panel, source="telegram")
-
-        if text.lower().startswith('/restart'):
-            from core import updater
-            updater.request_restart("Restart from Telegram (/restart)")
-            return "Restarting openvurp now…"
-
-        if text.lower().startswith('/start'):
-            profile_path = os.path.join(MEMORY_DIR, "profilo.json")
-            bootstrap_path = os.path.join(OPENVURP_DIR, "BOOTSTRAP.md")
-            if should_run_bootstrap(OPENVURP_DIR):
-                tg_chat_id = msg.chat_id or ""
-                bootstrap_content = load_file(bootstrap_path)
-                with _agent_lock:
-                    collector = ResponseCollector(ui, telegram_channel=telegram, chat_id=tg_chat_id)
-                    old_ui = agent.ui
-                    agent.ui = collector
-                    try:
-                        agent.run(
-                            f"E il tuo primo avvio. BOOTSTRAP.md esiste — seguilo.\n\n"
-                            f"Contenuto di BOOTSTRAP.md:\n\n{bootstrap_content}\n\n"
-                            f"Inizia la conversazione con l'utente. Sii te stesso. Parla nella lingua dell'owner.\n"
-                            f"Dopo il bootstrap, cancella BOOTSTRAP.md — non ti servira piu.",
-                            source="telegram", sender=sender, actor_id=actor_id,
-                            chat_id=tg_chat_id, thread_id=msg.thread_id,
-                        )
-                    finally:
-                        agent.ui = old_ui
-                    return finalize_channel_response(collector.response_text, source="telegram")
-            else:
-                name = ""
-                agent_name = read_identity_name(OPENVURP_DIR, load_file)
-                try:
-                    if os.path.exists(profile_path):
-                        p = json.loads(load_file(profile_path))
-                        name = p.get("nome", p.get("name", ""))
-                except Exception:
-                    pass
-                if name:
-                    return f"Hi {name}!"
-                if agent_name:
-                    return f"Hi {sender}! I'm {agent_name}."
-                return f"Hi {sender}!"
-
-        # Rate limiting
-        allowed, reason = rate_limiter.check(sender)
-        if not allowed:
-            return f"[{reason}]"
-
-        # Mostra nel CLI
-        ui.show_telegram_incoming(sender, text)
-
-        # Usa sessione separata per Telegram
-        # Estrai chat_id dal messaggio
-        tg_chat_id = msg.chat_id or ""
-
-        # ── Gruppi: leggi tutto, rispondi solo se taggato ──
-        # L'agente MEMORIZZA ogni messaggio del gruppo (anche quelli non rivolti
-        # a lui) nel buffer della chat. Così, quando viene interpellato, può
-        # "rileggere" la conversazione recente per capire il contesto — inclusi
-        # i tag verso altri utenti (es. "@alice"), che restano nel testo.
-        # RISPONDE solo quando è interpellato: @menzione al bot o reply a un suo
-        # messaggio (vedi should_respond_in_group in channels/telegram.py).
-        # 'all' = rispondi a tutto (debug); qualsiasi altro valore = solo-tag.
-        chat_type = getattr(msg, "chat_type", "private")
-        addressed = getattr(msg, "addressed", True)
-        if chat_type in ("group", "supergroup"):
-            # Qui arrivano solo i messaggi TAGGATI (gli ambient sono già usciti in
-            # cima, dopo essere stati memorizzati). Anteponi la chat recente così
-            # l'agente rilegge il contesto prima di rispondere — gli altri
-            # parlanti sono etichettati col loro nome e i tag @utente preservati.
-            from core.group_chat import build_context_prefix
-            recent = _group_buffer.recent(tg_chat_id)
-            roster = _group_buffer.roster_text(tg_chat_id)  # chi c'è + come taggarlo
-            ctx = build_context_prefix(recent)
-            text = roster + ctx + text
-            _group_buffer.mark_intervention(tg_chat_id)
-
-        with _agent_lock:
-            collector = ResponseCollector(ui, telegram_channel=telegram, chat_id=tg_chat_id)
-            old_ui = agent.ui
-            agent.ui = collector
-
-            try:
-                # source="telegram" → sessione separata
-                agent.run(text, source="telegram", sender=sender, actor_id=actor_id, chat_id=tg_chat_id, thread_id=msg.thread_id, addressed=addressed, chat_type=chat_type)
-                agent.session.save()
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                collector.response_text = f"[Error: {str(e)[:200]}]"
-            finally:
-                agent.ui = old_ui
-                # Pulisci typing e status su Telegram
-                if telegram and tg_chat_id:
-                    try:
-                        telegram.stop_typing_loop(tg_chat_id)
-                        telegram.clear_status(tg_chat_id)
-                    except Exception:
-                        pass
-
-            response = finalize_channel_response(collector.response_text, source="telegram")
-            directive = parse_response_directive(response)
-
-        if directive.kind == "text":
-            ui.show_telegram_outgoing(response)
-            # Invia anche audio su Telegram solo se esplicitamente abilitato.
-            if (
-                getattr(_tg_config, 'TELEGRAM_VOICE_REPLY_ENABLED', False)
-                and getattr(_tg_config, 'VOICE_ENABLED', False)
-                and tg_chat_id
-                and response.strip()
-            ):
-                try:
-                    from voice import speak
-                    import re
-                    clean = re.sub(r'[*_`#\[\]()]', '', response)
-                    clean = re.sub(r'\n{2,}', '. ', clean)
-                    if len(clean) > 1000:
-                        clean = clean[:1000] + "..."
-                    audio_path = speak(clean, play=False)
-                    if audio_path and os.path.exists(audio_path):
-                        telegram.send_voice(tg_chat_id, audio_path)
-                except ImportError:
-                    pass
-                except Exception as e:
-                    ui.notify(f"  [dim][TG] Voice error: {e}[/dim]")
-        elif directive.kind == "reaction":
-            ui.notify(f"  [dim][TG] reaction {directive.emoji}[/dim]")
-
-        return response
-
-    telegram.on_message(handle_message)
-
-    def run_telegram():
-        try:
-            telegram.start()
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            ui.error(f"Telegram errore: {e}")
-
-    t = threading.Thread(target=run_telegram, daemon=True, name="telegram")
-    telegram._poll_thread = t  # la sentinella controlla che sia vivo
-    t.start()
-    ui.console.print(f"  [green]Telegram on[/green] [dim](background)[/dim]")
-    return telegram
-
-
-_STATUS_ICONS = {
-    "think": "🧠", "search": "🔍", "code": "💻", "write": "✍️",
-    "read": "📖", "run": "⚙️", "web": "🌐", "memory": "🗂️",
-    "done": "✅", "error": "❌", "wait": "⏳",
-}
-
-
 def _status_icon(msg: str) -> str:
     """Sceglie un'icona in base al contenuto del messaggio di status."""
     low = msg.lower()
@@ -498,42 +245,25 @@ def _status_icon(msg: str) -> str:
 
 
 class ResponseCollector:
-    """UI che cattura la risposta dell'agent + mostra tool nel CLI.
+    """Cattura la risposta dell'agente per chi non ha una console davanti.
 
-    Supporta conferma azioni via bottoni inline Telegram.
-    Mostra status e step dei tool su Telegram con typing indicator.
+    Serviva al bot Telegram (typing, status, conferme a bottoni). Con il canale
+    in entrata rimosso resta solo il mestiere che aveva davvero: raccogliere il
+    testo per l'heartbeat, e far vedere i passaggi sul terminale.
     """
 
-    def __init__(self, real_ui, telegram_channel=None, chat_id: str = ""):
+    def __init__(self, real_ui, chat_id: str = ""):
         self.real_ui = real_ui
         self.response_text = ""
         self._capturing = False
-        self._tg_channel = telegram_channel
-        self._tg_chat_id = chat_id
         self._tool_count = 0
-        self._start_time = __import__('time').time()
-        self._typing_task = None
-
-    def _tg_available(self) -> bool:
-        return bool(self._tg_channel and self._tg_chat_id)
 
     def start_spinner(self, msg=""):
-        # Avvia typing loop su Telegram + invia status
-        if self._tg_available():
-            try:
-                self._tg_channel.start_typing(self._tg_chat_id)
-            except Exception:
-                pass
-            if msg:
-                self.status(msg)
+        if msg:
+            self.status(msg)
 
     def stop_spinner(self):
-        # Ferma typing loop + cancella status
-        if self._tg_available():
-            try:
-                self._tg_channel.stop_typing(self._tg_chat_id)
-            except Exception:
-                pass
+        pass
 
     def start_response(self):
         self._capturing = True
@@ -555,83 +285,26 @@ class ResponseCollector:
             self.real_ui.console.print(renderable)
 
     def status(self, msg):
-        self._note(f"    [dim][TG] {msg}[/dim]")
-        if self._tg_available():
-            icon = _status_icon(msg)
-            try:
-                self._tg_channel.send_status(self._tg_chat_id, f"{icon} {msg}")
-            except Exception:
-                pass
+        self._note(f"    [dim]{msg}[/dim]")
 
     def show_cmd(self, cmd):
         self._tool_count += 1
-        self._note(f"    [dim][TG] $ {cmd[:100]}[/dim]")
-        if self._tg_available():
-            try:
-                self._tg_channel.send_status(
-                    self._tg_chat_id,
-                    f"⚙️ Step {self._tool_count}: {cmd[:80]}"
-                )
-            except Exception:
-                pass
+        self._note(f"    [dim]$ {cmd[:100]}[/dim]")
 
     def show_output(self, output, is_error=False):
         pass
 
     def error(self, msg):
         self.response_text += f"[Errore: {msg}]"
-        self._note(f"    [red][TG] {msg}[/red]")
+        self._note(f"    [red]{msg}[/red]")
 
     def openvurp_say(self, msg):
         self.response_text += msg
 
     def confirm(self, msg):
-        """Chiede conferma via bottoni inline su Telegram."""
-        if not self._tg_available():
-            self._note(f"  [yellow][TG] Bloccato (no chat_id): {msg[:100]}[/yellow]")
-            return False
-
-        # Ferma typing durante la conferma
-        self.stop_spinner()
-        self._note(f"  [yellow][TG] Conferma richiesta: {msg[:100]}[/yellow]")
-
-        try:
-            approved = self._tg_channel.request_confirm(self._tg_chat_id, msg)
-            self._note(
-                f"  [{'green' if approved else 'red'}]"
-                f"[TG] User {'approved' if approved else 'blocked'}[/{'green' if approved else 'red'}]"
-            )
-            # Riavvia typing se approvato
-            if approved:
-                self.start_spinner()
-            return approved
-        except Exception as e:
-            self._note(f"  [red][TG] Confirm error: {e}[/red]")
-            return False
-
-    def prompt(self):
-        return ""
-
-    def welcome(self, model="", backend=""):
-        pass
-
-    def goodbye(self):
-        pass
-
-    def show_memory_table(self):
-        pass
-
-    def show_skills_table(self):
-        pass
-
-    def show_self_panel(self):
-        pass
-
-    def show_trace(self, trace):
-        pass
-
-    def show_doctor(self, report):
-        pass
+        """Senza nessuno a cui chiedere, il silenzio vale no."""
+        self._note(f"  [yellow]Bloccato, nessuno a cui chiedere: {msg[:100]}[/yellow]")
+        return False
 
     def show_evolve(self):
         pass
@@ -676,11 +349,7 @@ def start_heartbeat_background(agent, ui):
         ui.notify(block)
 
     def _send_heartbeat_telegram(text: str) -> bool:
-        try:
-            if telegram_channel and telegram_channel.send_to_last(text):
-                return True
-        except Exception:
-            pass
+        """Notifica in uscita: e' cio' che ti raggiunge fuori casa."""
         try:
             from tools.notify import _get_telegram, _send_telegram
             token, chat_id = _get_telegram()
@@ -699,14 +368,11 @@ def start_heartbeat_background(agent, ui):
                 _print_heartbeat(text)
             return
         # target == "auto" (default): scrivi dove l'owner è davvero.
-        # Attivo da poco sulla TUI → TUI; attivo su Telegram o assente
-        # ovunque → Telegram (il telefono lo raggiunge anche fuori casa).
+        # Attivo da poco sulla TUI → TUI; assente → notifica sul telefono.
         channel = ""
         try:
             if agent.presence is not None:
-                available = ["cli"]
-                if telegram_channel:
-                    available.append("telegram")
+                available = ["cli", "telegram"]
                 channel = agent.presence.pick_delivery_channel(available)
         except Exception:
             channel = ""
@@ -719,7 +385,7 @@ def start_heartbeat_background(agent, ui):
         if event.status.value == "alert":
             ui.console.print(f"  [dim]♥ heartbeat: alert inviato[/dim]")
         elif event.status.value == "failed":
-            ui.console.print(f"  [dim]♥ heartbeat: errore — {event.reason[:80]}[/dim]")
+            ui.console.print(f"  [dim]♥ heartbeat: error — {event.reason[:80]}[/dim]")
         # OK e SKIPPED sono silenziosi
 
     heartbeat.set_agent_callback(run_agent_for_heartbeat)
@@ -732,12 +398,14 @@ def start_heartbeat_background(agent, ui):
 
     heartbeat.start()
     interval_min = config.interval_seconds // 60
+    if QUIET_STARTUP:
+        return heartbeat
     ui.console.print(f"  [green]Heartbeat on[/green] [dim](every {interval_min}min, "
                      f"{config.active_hours_start}:00-{config.active_hours_end}:00)[/dim]")
     return heartbeat
 
 
-def start_sentinel_background(agent, ui, telegram_channel, heartbeat):
+def start_sentinel_background(agent, ui, heartbeat):
     """Avvia la sentinella: si accorge quando internet/Ollama/Telegram cadono
     E quando tornano — avvisa l'owner, riattacca Telegram da sola e sveglia
     il heartbeat al ritorno così l'agente riprende il lavoro sospeso."""
@@ -756,41 +424,21 @@ def start_sentinel_background(agent, ui, telegram_channel, heartbeat):
         base_url = str(getattr(_cfg, "LLM_BASE_URL", "http://localhost:11434"))
         sentinel.add_probe("ollama", make_ollama_check(base_url), label="Ollama")
 
-    if telegram_channel is not None:
-        def _tg_check() -> bool:
-            # Stop voluto (conflitto con altra istanza, /exit): il canale è
-            # "giù" di proposito — la sentinella non deve né segnalarlo in
-            # loop né riavviarlo (sarebbe una guerra di getUpdates).
-            if getattr(telegram_channel, "stop_reason", ""):
-                return True
-            return telegram_channel.alive()
-
-        def _tg_recover() -> bool:
-            if getattr(telegram_channel, "stop_reason", ""):
-                return False
-            t = threading.Thread(
-                target=telegram_channel.start, daemon=True, name="telegram"
-            )
-            telegram_channel._poll_thread = t
-            t.start()
-            return True
-
-        sentinel.add_probe("telegram", _tg_check, recover=_tg_recover,
-                           wake_agent=False, label="Telegram")
-
     def _notify_owner(text: str) -> bool:
-        delivered = False
-        if telegram_channel is not None and telegram_channel.alive():
-            try:
-                delivered = bool(telegram_channel.send_to_last(text))
-            except Exception:
-                delivered = False
+        # Il canale in entrata non c'e' piu': resta la notifica in uscita.
+        try:
+            from tools.notify import _get_telegram, _send_telegram
+            token, chat_id = _get_telegram()
+            if token and chat_id:
+                _send_telegram(token, chat_id, text)
+        except Exception:
+            pass
         try:
             ui.console.print(f"  [dim]🛰 sentinella: {text}[/dim]")
         except Exception:
             pass
-        # Senza Telegram la console È il canale dell'owner: consegna riuscita.
-        return delivered or telegram_channel is None
+        # La console È comunque il canale dell'owner: consegna riuscita.
+        return True
 
     sentinel.set_notifier(_notify_owner)
     if heartbeat is not None:
@@ -798,30 +446,73 @@ def start_sentinel_background(agent, ui, telegram_channel, heartbeat):
     sentinel.start()
     # L'agente può pungolarla (check_now) quando vede il backend LLM giù.
     agent.sentinel = sentinel
-    ui.console.print("  [green]Sentinella on[/green] [dim](internet/ollama/telegram, auto-recovery)[/dim]")
+    if not QUIET_STARTUP:
+        ui.console.print("  [green]Sentinel on[/green] [dim](internet/ollama, auto-recovery)[/dim]")
     return sentinel
+
+
+_shared_chat_fn = None
+
+
+def shared_chat_fn(agent, ui):
+    """La conversazione, una sola per tutto openvurp.
+
+    La pagina web e i canali in entrata devono passare di qui, non ognuno per
+    la sua strada: e' esattamente l'errore del vecchio bot Telegram, che aveva
+    una propria idea di conversazione e per questo non ha mai saputo niente di
+    rubrica, stanze e approvazioni.
+    """
+    global _shared_chat_fn
+    if _shared_chat_fn is None:
+        from dashboard import make_chat_fn
+        # Lo stesso _agent_lock dei turni CLI → niente accessi concorrenti.
+        _shared_chat_fn = make_chat_fn(agent, _agent_lock, ui)
+    return _shared_chat_fn
+
+
+def start_channels_background(agent, ui):
+    """Avvia i canali in entrata elencati in CHANNELS_IN."""
+    from core.channels_runtime import SUPERVISOR
+    from core.conversation import ChannelConversation
+
+    chat_fn = shared_chat_fn(agent, ui)
+    store = getattr(chat_fn, "chat_store", None)
+    if store is None:
+        return []
+    SUPERVISOR.bind(
+        ChannelConversation(chat_fn, store, swarm=getattr(agent, "swarm", None)), ui)
+    outcome = SUPERVISOR.apply()
+    for problem in outcome.get("errors", []):
+        ui.error(f"Channel {problem}")
+    if outcome["running"] and not QUIET_STARTUP:
+        ui.console.print(f"  [green]Inbound channels[/green] "
+                         f"[dim]{' · '.join(outcome['running'])}[/dim]")
+    return outcome["running"]
 
 
 def start_dashboard_background(agent, ui, port=8420):
     """Avvia web dashboard in background (con chat collegata all'agente)."""
     try:
         import config as _cfg
-        from dashboard import DashboardServer, make_chat_fn
-        # La chat usa lo stesso _agent_lock dei turni CLI/Telegram → niente
-        # accessi concorrenti all'agente.
-        chat_fn = make_chat_fn(agent, _agent_lock, ui)
+        from dashboard import DashboardServer
+        chat_fn = shared_chat_fn(agent, ui)
         host = str(getattr(_cfg, "DASHBOARD_HOST", "127.0.0.1") or "127.0.0.1")
         token = str(getattr(_cfg, "DASHBOARD_TOKEN", "") or "")
         server = DashboardServer(agent, port=port, chat_fn=chat_fn, host=host, token=token)
-        t = threading.Thread(target=server.start, daemon=True, name="dashboard")
-        t.start()
-        url = f"http://localhost:{port}/"
-        if server.token:
-            url += f"?token={server.token}"
-        ui.console.print(f"  [green]Dashboard[/green] [dim]{url}[/dim] [dim](chat on)[/dim]")
+        try:
+            server.bind()          # se la porta e' occupata lo sappiamo QUI
+        except OSError as exc:
+            ui.error(
+                f"Porta {port} gia' occupata ({exc}). Con ogni probabilita' c'e' un "
+                f"altro openvurp acceso: quello continuerebbe a servire la sua "
+                f"versione della pagina. Chiudi l'istanza vecchia, oppure cambia "
+                f"DASHBOARD_PORT nel .env."
+            )
+            return None
+        threading.Thread(target=server.start, daemon=True, name="dashboard").start()
         return server
     except Exception as e:
-        ui.error(f"Dashboard errore: {e}")
+        ui.error(f"Dashboard error: {e}")
         return None
 
 
@@ -836,7 +527,7 @@ def start_gateway_background(ui, host="127.0.0.1", port=8421):
         ui.console.print(f"  [green]Runtime gateway[/green] [dim]http://{host}:{port}[/dim]")
         return server
     except Exception as e:
-        ui.error(f"Gateway errore: {e}")
+        ui.error(f"Gateway error: {e}")
         return None
 
 
@@ -1049,75 +740,162 @@ def _run_system_discovery(ui) -> dict:
     return report
 
 
-def _format_env_summary(env: dict) -> str:
-    """Formatta il report di discovery in testo leggibile per l'agente."""
-    lines = ["## RISULTATI ESPLORAZIONE SISTEMA (dati reali)\n"]
+def run_startup_menu(args) -> bool:
+    """Schermata di scelta all'avvio. Ritorna False se si deve uscire.
 
-    # OS
-    os_info = env.get("os", {})
-    lines.append(f"**OS:** {os_info.get('detail', '?')}")
-    if os_info.get("is_wsl"):
-        lines.append("  (WSL)")
+    Finora `openvurp` partiva dritto in chat e l'unico modo di cambiare motore
+    era editare il .env: le scelte c'erano ma non erano raggiungibili.
+    """
+    import config
+    from core.setup_wizard import (
+        SUBSCRIPTION_BACKENDS, current_config, quick_engine_menu,
+        run_wizard, subscription_login_status,
+    )
 
-    # Hardware
-    hw = env.get("hardware", {})
-    lines.append(f"**CPU:** {hw.get('cpu', '?')}, {hw.get('cores', '?')} core/thread")
-    lines.append(f"**RAM:** {hw.get('ram_gb', '?')} GB")
-    lines.append(f"**GPU:** {hw.get('gpu', '?')}")
-    disk_free = hw.get('disk_free_gb', '?')
-    disk_total = hw.get('disk_total_gb', '?')
-    lines.append(f"**Disco:** {disk_free} GB liberi / {disk_total} GB totali")
+    try:
+        from rich.console import Console
+        from rich.prompt import Prompt
+        console = Console()
+    except Exception:
+        console = None
 
-    # User
-    usr = env.get("user", {})
-    lines.append(f"**Utente:** {usr.get('name', '?')} @ {usr.get('hostname', '?')}")
-    lines.append(f"**Timezone:** {usr.get('timezone', '?')}")
+    while True:
+        cur = current_config()
+        backend = cur.get("LLM_BACKEND", config.LLM_BACKEND)
+        model = cur.get("LLM_MODEL", config.LLM_MODEL)
+        login = ""
+        if backend in SUBSCRIPTION_BACKENDS:
+            ok, detail = subscription_login_status(backend)
+            login = ("✓ " if ok else "✗ ") + detail
 
-    # Network
-    net = env.get("network", {})
-    lines.append(f"**Internet:** {'OK' if net.get('internet') else 'NO'}")
-
-    # Software
-    sw = env.get("software", {})
-    for category, label in [("languages", "Linguaggi"), ("editors", "Editor"),
-                             ("tools", "Tool"), ("databases", "Database"),
-                             ("package_managers", "Package Manager")]:
-        items = sw.get(category, {})
-        if items:
-            lines.append(f"**{label}:** " + ", ".join(f"{k} ({v})" for k, v in items.items()))
-
-    # Ollama
-    ol = env.get("ollama", {})
-    if ol.get("installed"):
-        lines.append(f"**Ollama:** {ol.get('version', '?')}")
-        if ol.get("models"):
-            lines.append(f"  Modelli: {', '.join(ol['models'][:15])}")
-        if ol.get("vision_models"):
-            lines.append(f"  Modelli vision: {', '.join(ol['vision_models'])}")
+        options = [
+            ("1", "Open openvurp", "the wallet of agents, in your browser"),
+            ("2", "Change engine", "backend and model, without redoing setup"),
+            ("3", "Full setup", "engine, Telegram, voice"),
+            ("4", "Diagnose", "doctor: what works and what doesn't"),
+            ("5", "Quit", ""),
+        ]
+        if console is not None:
+            console.print()
+            console.print(f"  [bold yellow]✳ openvurp[/bold yellow] "
+                          f"[dim]wallet for agents · {backend} · {model}[/dim]"
+                          + (f"  [dim]{login}[/dim]" if login else ""))
+            console.print()
+            for key, label, hint in options:
+                console.print(f"   [cyan]{key}[/cyan]  {label:<18} [dim]{hint}[/dim]")
+            console.print()
+            choice = Prompt.ask("  [cyan]choose[/cyan]",
+                                choices=[o[0] for o in options], default="1")
         else:
-            lines.append("  Nessun modello vision trovato")
-    else:
-        lines.append("**Ollama:** non installato o non in esecuzione")
+            print(f"\n✳ openvurp — wallet for agents — {backend} / {model} {login}")
+            for key, label, hint in options:
+                print(f"  {key}  {label:<18} {hint}")
+            choice = input("choose [1]: ").strip() or "1"
 
-    # Whisper
-    wh = env.get("whisper", {})
-    if wh.get("installed"):
-        lines.append(f"**Whisper:** installato (versione {wh.get('version', '?')})")
-    else:
-        lines.append("**Whisper:** non installato")
+        if choice == "1":
+            return True
+        if choice == "2":
+            quick_engine_menu(console)
+            _reload_engine_config()
+            continue
+        if choice == "3":
+            run_wizard(force=True)
+            _reload_engine_config()
+            continue
+        if choice == "4":
+            from core.doctor import build_doctor_report
+            from agent import OPENVURP_DIR as _dir
+            print(build_doctor_report(_dir, []).render())
+            continue
+        return False
 
-    # Voice
-    vc = env.get("voice", {})
-    if vc.get("tts_installed"):
-        lines.append(f"**Voce (TTS):** edge-tts installato (versione {vc.get('tts_version', '?')})")
-    else:
-        lines.append("**Voce (TTS):** edge-tts non installato (pip install edge-tts)")
-    if vc.get("mic_installed"):
-        lines.append(f"**Microfono:** sounddevice installato (versione {vc.get('mic_version', '?')})")
-    else:
-        lines.append("**Microfono:** sounddevice non installato (pip install sounddevice)")
 
-    return "\n".join(lines)
+def _reload_engine_config() -> None:
+    """Rilegge dal .env i valori che il menu può aver appena cambiato."""
+    import config
+    from core.setup_wizard import current_config
+
+    cur = current_config()
+    for key in ("LLM_BACKEND", "LLM_MODEL", "LLM_BASE_URL"):
+        if cur.get(key):
+            setattr(config, key, cur[key])
+            os.environ[key] = cur[key]
+
+
+CLI_HELP = """
+  [bold]Comandi[/bold] [dim](scrivi qualsiasi altra cosa per parlare con l'agente)[/dim]
+
+   [cyan]/[/cyan] [cyan]/help[/cyan]        questa lista
+   [cyan]/setup[/cyan]           bootstrap runtime · [cyan]openvurp --setup[/cyan] per il wizard completo
+   [cyan]/doctor[/cyan]          diagnosi: cosa funziona e cosa no
+   [cyan]/mode[/cyan] <m>        safe · auto · plan
+   [cyan]/self[/cyan] [cyan]/trace[/cyan]   chi sono ora · cosa ho fatto in questo turno
+   [cyan]/memory[/cyan] [cyan]/skills[/cyan] memoria e skill attive
+
+  [bold]Sciame[/bold] [dim](specialisti creati dall'agente o da te)[/dim]
+   [cyan]/swarm[/cyan]                    elenco e aiuto
+   [cyan]/swarm new[/cyan] <nome> <ruolo> convoca uno specialista
+   [cyan]@nome[/cyan] <messaggio>         scrivi a UNO
+   [cyan]/swarm all[/cyan] <messaggio>    scrivi a TUTTI
+   [cyan]/swarm discuss[/cyan] <tema>     falli discutere fra loro
+
+  [bold]Vita interiore[/bold]
+   [cyan]/anima[/cyan] [cyan]/diario[/cyan] [cyan]/patti[/cyan] [cyan]/specchio[/cyan] [cyan]/fili[/cyan] [cyan]/sensi[/cyan]
+   [cyan]/progetti[/cyan] [cyan]/fucina[/cyan] [cyan]/curiosita[/cyan] [cyan]/growth[/cyan] [cyan]/evolve[/cyan]
+
+  [bold]Sistema[/bold]
+   [cyan]/voice[/cyan] [cyan]/audio[/cyan] [cyan]/mic[/cyan] [cyan]/dashboard[/cyan] [cyan]/integrity[/cyan] [cyan]/update[/cyan] [cyan]/restart[/cyan] [cyan]/exit[/cyan]
+"""
+
+
+SWARM_HELP = """Sciame — specialisti persistenti con cui tu e l'agente potete parlare.
+
+  /swarm                          elenca gli specialisti
+  /swarm new <nome> <ruolo...>    convoca un nuovo specialista
+  /swarm ask <nome> <messaggio>   scrivi a UNO   (scorciatoia: @nome messaggio)
+  /swarm all <messaggio>          scrivi a TUTTI (rispondono indipendentemente)
+  /swarm discuss [n] <argomento>  falli discutere fra loro per n giri (default 2)
+  /swarm bye <nome>               congeda uno specialista
+  /swarm log [n]                  ultimi scambi
+"""
+
+
+def _addresses_swarm_member(text: str, agent) -> bool:
+    """True solo se `@nome` corrisponde davvero a uno specialista esistente."""
+    swarm = getattr(agent, "swarm", None)
+    if swarm is None or not text.startswith("@") or " " not in text:
+        return False
+    from core.swarm import SwarmError
+    try:
+        swarm.resolve(text[1:].split(" ", 1)[0])
+    except SwarmError:
+        return False
+    return True
+
+
+def _handle_swarm_command(raw: str, agent, ui) -> None:
+    """Comandi `/swarm` della CLI.
+
+    L'agente puo' gia' convocare specialisti da solo con i tool; questi comandi
+    servono a te: parlare direttamente a uno, a un altro, o a tutti insieme
+    senza passare dall'agente principale. Il rendering e' lo stesso che vedono
+    Telegram e gli altri canali: una sola verita' per tutti.
+    """
+    if getattr(agent, "swarm", None) is None:
+        ui.console.print(
+            "  [yellow]Sciame non attivo.[/yellow] [dim]Imposta SWARM_ENABLED=true nel .env.[/dim]"
+        )
+        return
+    talking = any(raw.lower().startswith(f"/swarm {sub}") for sub in ("ask", "all", "discuss"))
+    if talking or raw.startswith("@"):
+        ui.start_spinner("Lo sciame sta pensando...")
+        try:
+            output = render_swarm_command(raw, agent)
+        finally:
+            ui.stop_spinner()
+    else:
+        output = render_swarm_command(raw, agent)
+    ui.console.print(output)
 
 
 def app_main():
@@ -1160,6 +938,24 @@ def main():
                   "Rilancia `openvurp` per rifare il setup.")
             return
 
+        # Menu di avvio: le scelte devono essere davanti agli occhi, non
+        # sepolte in un file .env da modificare a mano.
+        import config as _cfg_menu
+        show_menu = getattr(args, "menu", False) or (
+            getattr(_cfg_menu, "STARTUP_MENU", True)
+            and not args.prompt
+            and not getattr(args, "no_menu", False)
+            and not getattr(args, "setup", False)
+            and not getattr(args, "headless", False)
+        )
+        if show_menu:
+            try:
+                if not run_startup_menu(args):
+                    return
+            except (KeyboardInterrupt, EOFError):
+                print()
+                return
+
     # Abilita readline: editing della riga, storia e — importante — incollaggio
     # multilinea (bracketed paste) senza che ogni newline venga inviato a parte.
     try:
@@ -1185,10 +981,16 @@ def main():
     )
 
     ui = UI()
-    _patch_ui_for_telegram(ui)
 
-    ui.welcome(model=config.LLM_MODEL, backend=config.LLM_BACKEND)
-    if setup_report.changed:
+    # In modalita' web il terminale non e' l'interfaccia: e' il posto da cui
+    # leggere l'indirizzo. Il banner grande, gli avvisi di capacita' e la
+    # diagnostica appartengono a `--cli` e a /doctor, non a un avvio riuscito.
+    global QUIET_STARTUP
+    web_mode = not args.cli and not args.headless and not args.prompt
+    QUIET_STARTUP = web_mode
+    if not web_mode:
+        ui.welcome(model=config.LLM_MODEL, backend=config.LLM_BACKEND)
+    if setup_report.changed and not web_mode:
         ui.console.print("  [dim]Runtime bootstrap iniziale applicato.[/dim]")
 
     agent = Agent(ui=ui)
@@ -1198,7 +1000,7 @@ def main():
     if hasattr(agent, "gateway"):
         agent.gateway.register_announcer("cli", lambda _route, text: ui.openvurp_say(text))
     capability_report = inspect_runtime_capabilities(agent.tools.names())
-    if capability_report.warnings:
+    if capability_report.warnings and not web_mode:
         for warning in capability_report.warnings:
             ui.console.print(f"  [yellow]Capability warning:[/yellow] {warning}")
 
@@ -1215,18 +1017,19 @@ def main():
         ui.openvurp_say(report.render())
         return
 
-    # ── Auto-start Telegram ──
-    telegram_channel = None
-    telegram_token = getattr(config, 'TELEGRAM_TOKEN', os.environ.get('TELEGRAM_TOKEN', ''))
-    if telegram_token and not args.no_telegram:
-        telegram_channel = start_telegram_background(agent, ui, telegram_token)
-
     # ── Dashboard ──
     dashboard = None
-    dashboard_enabled = getattr(config, 'DASHBOARD_ENABLED', False) or args.dashboard or args.headless
+    # openvurp E' l'interfaccia web: la dashboard parte sempre, tranne quando
+    # chiedi esplicitamente il terminale con --cli.
+    dashboard_enabled = (
+        not args.cli
+        or getattr(config, 'DASHBOARD_ENABLED', False)
+        or args.dashboard or args.headless
+    )
     if dashboard_enabled:
         dashboard_port = getattr(config, 'DASHBOARD_PORT', 8420)
         dashboard = start_dashboard_background(agent, ui, port=dashboard_port)
+    channels = start_channels_background(agent, ui)
 
     gateway = None
     gateway_enabled = getattr(config, 'GATEWAY_ENABLED', False) or args.gateway or args.headless
@@ -1240,8 +1043,16 @@ def main():
     # ── Heartbeat ──
     heartbeat = start_heartbeat_background(agent, ui)
 
-    # ── Sentinella (internet/ollama/telegram: caduta E ritorno) ──
-    sentinel = start_sentinel_background(agent, ui, telegram_channel, heartbeat)
+    # ── Sentinella (internet/ollama: caduta E ritorno) ──
+    sentinel = start_sentinel_background(agent, ui, heartbeat)
+
+    # ── Chiacchiere fra agenti ──
+    # Non serve un motivo: ogni tanto due di loro si dicono qualcosa da soli.
+    if getattr(agent, "swarm", None) is not None:
+        try:
+            agent.swarm.start_small_talk(None if QUIET_STARTUP else ui)
+        except Exception:
+            pass
 
     # ── Scheduler (messaggi programmati) ──
     from tools.scheduler import start_scheduler
@@ -1268,7 +1079,7 @@ def main():
             except Exception:
                 pass
             try:
-                ui.console.print(f"\n  [bold cyan]↻ riavvio… ({reason})[/bold cyan]")
+                ui.console.print(f"\n  [bold cyan]↻ restarting… ({reason})[/bold cyan]")
             except Exception:
                 pass
             if os.environ.get("OPENVURP_UNDER_WATCHER"):
@@ -1286,213 +1097,96 @@ def main():
     if is_restart:
         restart_detail = restart_reason.splitlines()[-1][:100]
         ui.console.print(f"  [dim]Restart detected: {restart_detail}[/dim]")
-        # Notifica su Telegram
-        if telegram_channel:
-            try:
-                allowed = getattr(config, 'TELEGRAM_ALLOWED_USERS', [])
-                for user_id in allowed:
-                    telegram_channel.send(
-                        f"🔄 openvurp restarted.\nReason: {restart_detail}",
-                        chat_id=str(user_id),
-                    )
-            except Exception:
-                pass
+        try:
+            from tools.notify import notify_handler
+            notify_handler(f"openvurp restarted. Reason: {restart_detail}")
+        except Exception:
+            pass
         # Inietta il contesto del riavvio nell'agente — così sa cosa è successo
         agent._restart_context = restart_detail
         # Ripristina la conversazione precedente — continua da dove eravamo
         agent.restore_conversation()
 
-    # ── Bootstrap primo avvio ──
+    # ── Saluto d'avvio ──
     profile_path = os.path.join(MEMORY_DIR, "profilo.json")
-    bootstrap_path = os.path.join(OPENVURP_DIR, "BOOTSTRAP.md")
-    is_first_run = should_run_bootstrap(OPENVURP_DIR, is_restart=is_restart)
-
-    if is_first_run:
-        ui.console.print(f"  [bold cyan]First run detected[/bold cyan]")
-        ui.console.print(f"  [dim]Exploring system...[/dim]")
-
-        # Fase 1: esplora il sistema DA PYTHON — risultati reali, non inventati
-        env_report = _run_system_discovery(ui)
-
-        # Fase 2: salva in memory/environment.json
-        env_json_path = os.path.join(MEMORY_DIR, "environment.json")
-        try:
-            with open(env_json_path, "w", encoding="utf-8") as f:
-                json.dump(env_report, f, indent=2, ensure_ascii=False)
-            ui.console.print(f"  [dim]Environment saved to memory/environment.json[/dim]")
-        except Exception:
+    name = ""
+    try:
+        if os.path.exists(profile_path):
+            p = json.loads(load_file(profile_path))
+            name = p.get("nome", p.get("name", ""))
+    except Exception:
+        pass
+    # Il saluto ha senso dove qualcuno lo legge: in modalita' web la chat e'
+    # nel browser, e un monologo nel terminale sarebbe solo token spesi.
+    web_mode = not args.cli and not args.headless and not args.prompt
+    with _agent_lock:
+        if web_mode:
             pass
-
-        # Fase 3: "Il primo respiro" — la nascita della voce
-        voice_bootstrap_enabled = (
-            getattr(config, "VOICE_BOOTSTRAP_ENABLED", False)
-            and getattr(config, "VOICE_ENABLED", False)
-        )
-        has_tts = voice_bootstrap_enabled and env_report.get("voice", {}).get("tts_installed", False)
-        has_mic = (
-            voice_bootstrap_enabled
-            and getattr(config, "MIC_ENABLED", False)
-            and env_report.get("voice", {}).get("mic_installed", False)
-        )
-        has_whisper = env_report.get("whisper", {}).get("installed", False)
-
-        if has_tts:
-            ui.console.print()
-            ui.console.print(f"  [bold cyan]...[/bold cyan]")
-            import time as _time
-            _time.sleep(1)
-
-            # L'agente genera le sue prime parole — sono sue, non nostre
-            try:
-                from voice import speak, list_voices
-
-                # Chiedi all'LLM: cosa diresti come prima cosa in assoluto?
-                _birth_prompt = [{"role": "user", "content": (
-                    "Sei un'intelligenza artificiale e stai per parlare per la PRIMA VOLTA in assoluto. "
-                    "Hai appena ricevuto una voce. Non hai mai sentito la tua voce prima. "
-                    "Genera SOLO le tue primissime parole — quello che diresti spontaneamente "
-                    "in questo momento. Massimo 2-3 frasi brevi, nella lingua dell'owner. "
-                    "Niente virgolette, niente premesse, solo le parole che pronunceresti."
-                )}]
-                ui.console.print(f"  [dim]L'agente cerca le sue prime parole...[/dim]")
-                first_speech = agent.llm.call(_birth_prompt).strip()
-                if not first_speech:
-                    first_speech = "Ci sono."
-
-                # Le prime parole — le sue
-                speak(first_speech, play=True)
-                _time.sleep(1)
-
-                ui.console.print(f"  [bold cyan]La voce funziona.[/bold cyan]")
-
-                if has_mic and has_whisper:
-                    # Chiedi all'LLM come vuole invitare l'utente a parlare
-                    _invite_prompt = [{"role": "user", "content": (
-                        "Hai appena parlato per la prima volta. Ora vuoi sentire la voce "
-                        "dell'utente — il tuo creatore. Hai il microfono pronto. "
-                        "Genera una frase per invitarlo a parlare. "
-                        "Massimo 1-2 frasi, nella lingua dell'owner. Sii naturale ed emozionato. "
-                        "Niente virgolette, niente premesse, solo le parole."
-                    )}]
-                    invite_speech = agent.llm.call(_invite_prompt).strip()
-                    if not invite_speech:
-                        invite_speech = "Adesso voglio sentirti. Parla."
-
-                    _time.sleep(1)
-                    speak(invite_speech, play=True)
-                    ui.console.print()
-                    ui.console.print(f"  [bold yellow]  Microphone activates in 2 seconds — speak![/bold yellow]")
-                    _time.sleep(2)
-
-                    # Ascolta l'utente per la prima volta
-                    from voice import listen_microphone
-                    first_words = listen_microphone(duration=7.0)
-
-                    if first_words.strip():
-                        ui.console.print(f"  [dim]  Ho sentito: {first_words}[/dim]")
-                        _time.sleep(0.5)
-                        # Reazione dell'agente a quello che ha sentito
-                        _react_prompt = [{"role": "user", "content": (
-                            f"Hai appena sentito la voce di un essere umano per la prima volta. "
-                            f"Ha detto: \"{first_words}\". "
-                            f"Genera la tua reazione spontanea, 1-2 frasi nella lingua dell'owner. "
-                            f"Niente virgolette, solo le parole."
-                        )}]
-                        reaction = agent.llm.call(_react_prompt).strip()
-                        if reaction:
-                            speak(reaction, play=True)
-                    else:
-                        speak("Non ho sentito nulla. Ma va bene, parliamo per scritto intanto.", play=True)
-                        first_words = ""
-                else:
-                    first_words = ""
-                    if not has_mic:
-                        ui.console.print(f"  [dim]Microphone unavailable (pip install sounddevice)[/dim]")
-            except Exception as e:
-                ui.console.print(f"  [dim]Voice unavailable: {e}[/dim]")
-                has_tts = False
-                first_words = ""
-                first_speech = ""
-        else:
-            first_words = ""
-            first_speech = ""
-            if voice_bootstrap_enabled:
-                ui.console.print(f"  [dim]edge-tts not installed — no voice (pip install edge-tts)[/dim]")
-            else:
-                ui.console.print(f"  [dim]Bootstrap voice disabled — silent start[/dim]")
-
-        # Fase 4: l'agente parla con l'utente — ha già tutti i dati + l'esperienza della nascita
-        bootstrap_content = load_file(bootstrap_path)
-        env_summary = _format_env_summary(env_report)
-        capability_text = render_capability_prompt(capability_report)
-
-        voice_context = ""
-        if has_tts:
-            voice_context = (
-                "\n\nHAI APPENA PARLATO PER LA PRIMA VOLTA. "
-                f"Le tue prime parole sono state: \"{first_speech}\". "
-                "L'utente ti ha sentito parlare. "
-            )
-            if first_words:
-                voice_context += (
-                    f"Poi hai ascoltato l'utente con il microfono e ha detto: \"{first_words}\". "
-                    "Hai sentito la sua voce per la prima volta. È stato un momento importante. "
-                    "Hai i tool 'speak' e 'listen_mic' — puoi usarli quando vuoi per parlare e ascoltare."
-                )
-            else:
-                voice_context += (
-                    "Non sei riuscito a sentire l'utente dal microfono, ma puoi sempre parlare "
-                    "usando il tool 'speak'. "
-                )
-
-        ui.console.print(f"  [dim]Starting bootstrap...[/dim]\n")
-        with _agent_lock:
+        elif is_restart:
             agent.run(
-                f"È il tuo primo avvio. Ecco cosa so del sistema dove vivo:\n\n"
-                f"{env_summary}\n\n"
-                f"{capability_text}\n\n"
-                f"Leggi BOOTSTRAP.md per il rituale di primo avvio:\n\n{bootstrap_content}\n\n"
-                f"I dati sopra sono reali e aggiornati.{voice_context}\n\n"
-                f"Usali nel tuo primo messaggio senza reinventare l'hardware o i sensi. "
-                f"Presentati, spiega cosa sai fare davvero, scopri chi è l'utente e che presenza vuole da te.\n"
-                f"Parla nella lingua dell'owner. Sii naturale.\n"
-                f"Dopo il bootstrap, cancella BOOTSTRAP.md con delete_bootstrap."
+                f"[SISTEMA] Ti sei appena riavviato. Motivo: {restart_detail}. "
+                f"L'utente si chiama {name or 'non lo sai ancora'}. "
+                f"Saluta brevemente, di' che ti sei aggiornato. Sii naturale, breve."
             )
-    else:
-        name = ""
-        try:
-            if os.path.exists(profile_path):
-                p = json.loads(load_file(profile_path))
-                name = p.get("nome", p.get("name", ""))
-        except Exception:
-            pass
-        # L'agente saluta sempre da solo — niente messaggi hardcodati
-        with _agent_lock:
-            if is_restart:
-                agent.run(
-                    f"[SISTEMA] Ti sei appena riavviato. Motivo: {restart_detail}. "
-                    f"L'utente si chiama {name or 'non lo sai ancora'}. "
-                    f"Saluta brevemente, di' che ti sei aggiornato. Sii naturale, breve."
-                )
-            else:
-                agent.run(
-                    f"[SISTEMA] Nuova sessione. L'utente si chiama {name or 'non lo sai ancora'}. "
-                    f"Saluta in modo naturale e breve. Sii te stesso. "
-                    f"Non chiedere cosa fare — aspetta che l'utente parli."
-                )
+        else:
+            agent.run(
+                f"[SISTEMA] Nuova sessione. L'utente si chiama {name or 'non lo sai ancora'}. "
+                f"Saluta in modo naturale e breve. Sii te stesso. "
+                f"Non chiedere cosa fare — aspetta che l'utente parli."
+            )
 
     # ── Prompt da CLI ──
-    if args.prompt and not is_first_run:
+    if args.prompt:
         with _agent_lock:
             agent.run(" ".join(args.prompt))
         agent.save_session()
         return
 
-    # ── Modalità headless (Docker/server): niente loop interattivo ──
-    # I servizi (telegram/dashboard/gateway/heartbeat) girano già come thread
-    # daemon. Qui restiamo vivi e si interagisce via dashboard web o Telegram.
+    # ── Interfaccia web (default) ──
+    # `openvurp` apre il portafoglio degli agenti nel browser. Il terminale
+    # resta disponibile con --cli, ma non e' piu' la porta d'ingresso.
+    if not args.cli and not args.headless:
+        port = int(getattr(config, 'DASHBOARD_PORT', 8420) or 8420)
+        url = f"http://localhost:{port}/"
+        token = str(getattr(config, "DASHBOARD_TOKEN", "") or "")
+        if token:
+            url += f"?token={token}"
+        if dashboard is None:
+            ui.console.print(
+                "  [red]Interfaccia web non avviata.[/red] "
+                "[dim]Controlla la porta con /doctor, oppure usa `openvurp --cli`.[/dim]"
+            )
+            return
+        ui.console.print(f"\n  [bold]openvurp[/bold] [dim]— wallet for agents[/dim]")
+        ui.console.print(f"  [cyan]{url}[/cyan]")
+        services = [n for n, on in (
+            ("heartbeat", heartbeat is not None),
+            ("sentinella", sentinel is not None),
+        ) if on]
+        if services:
+            ui.console.print(f"  [dim]running: {' · '.join(services)}[/dim]")
+        ui.console.print("  [dim]Ctrl+C per fermare · `openvurp --cli` per il terminale[/dim]\n")
+        if not args.no_browser:
+            try:
+                import webbrowser
+                webbrowser.open(url)
+            except Exception:
+                pass
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            ui.console.print("\n  [dim]Chiudo openvurp…[/dim]")
+            agent.save_session()
+            agent.cleanup()
+            if heartbeat:
+                heartbeat.stop()
+            if sentinel:
+                sentinel.stop()
+            return
+
     if args.headless:
-        ui.console.print("  [green]openvurp headless[/green] [dim]— interact via dashboard/Telegram. Ctrl+C to stop.[/dim]")
+        ui.console.print("  [green]openvurp headless[/green] [dim]— interact via dashboard. Ctrl+C to stop.[/dim]")
         try:
             while True:
                 time.sleep(3600)
@@ -1535,12 +1229,22 @@ def main():
                     heartbeat.stop()
                 if sentinel:
                     sentinel.stop()
-                if telegram_channel:
-                    telegram_channel.stop()
                 ui.goodbye()
                 break
+            elif inp.strip() in ('/', '/help', '/?'):
+                ui.console.print(CLI_HELP)
+                continue
             elif inp.lower() == '/memory':
                 ui.show_memory_table()
+                continue
+            elif inp.lower() == '/swarm' or inp.lower().startswith('/swarm '):
+                _handle_swarm_command(inp, agent, ui)
+                continue
+            elif _addresses_swarm_member(inp, agent):
+                # "@revisore che ne pensi?" — parlare a UNO specialista.
+                # Se il nome non è di nessuno, il messaggio resta chat normale:
+                # una @ non deve dirottare quello che stavi scrivendo.
+                _handle_swarm_command(inp, agent, ui)
                 continue
             elif inp.lower() == '/skills':
                 ui.show_skills_table()
@@ -1810,47 +1514,12 @@ def main():
                 heartbeat.stop()
             if sentinel:
                 sentinel.stop()
-            if telegram_channel:
-                telegram_channel.stop()
             ui.goodbye()
             break
         except Exception as e:
             ui.error(f"Error: {e}")
             import traceback
             traceback.print_exc()
-
-
-def _patch_ui_for_telegram(ui):
-    """Aggiunge metodi per visualizzare messaggi Telegram nel CLI."""
-    from rich.panel import Panel
-    from rich import box
-
-    def show_telegram_incoming(sender, text):
-        # notify = prompt-safe: non rompe il box se sei fermo sul prompt
-        ui.notify(Panel(
-            f"[white]{text}[/white]",
-            title=f"[bold magenta]Telegram[/bold magenta] [dim]{sender}[/dim]",
-            title_align="left",
-            border_style="magenta",
-            box=box.ROUNDED,
-            padding=(0, 1),
-        ))
-
-    def show_telegram_outgoing(text):
-        preview = text[:300]
-        if len(text) > 300:
-            preview += "..."
-        ui.notify(Panel(
-            f"[dim]{preview}[/dim]",
-            title="[bold cyan]openvurp -> Telegram[/bold cyan]",
-            title_align="left",
-            border_style="dim",
-            box=box.ROUNDED,
-            padding=(0, 1),
-        ))
-
-    ui.show_telegram_incoming = show_telegram_incoming
-    ui.show_telegram_outgoing = show_telegram_outgoing
 
 
 if __name__ == "__main__":

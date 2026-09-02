@@ -2,7 +2,7 @@
 openvurp Core — Bootstrap Context Loader
 
 Carica i file workspace (SOUL.md, IDENTITY.md, AGENTS.md, USER.md, TOOLS.md,
-MEMORY.md, HEARTBEAT.md, BOOTSTRAP.md) freschi da disco ad ogni turno.
+MEMORY.md, HEARTBEAT.md) freschi da disco ad ogni turno.
 
 Approccio a livelli:
 - Rilegge da disco ogni turno (no cache statica, ma identity-check via stat)
@@ -31,7 +31,6 @@ BOOTSTRAP_FILENAMES = [
     "TOOLS.md",
     "MEMORY.md",
     "HEARTBEAT.md",
-    "BOOTSTRAP.md",
 ]
 
 # Compatibilità con i nomi file legacy del workspace.
@@ -50,7 +49,7 @@ SESSION_START_ALLOWLIST = {"AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md", "TO
 GROUP_ALLOWLIST = {"AGENTS.md", "SOUL.md", "IDENTITY.md", "TOOLS.md"}
 
 # File ammessi solo in sessioni principali (DM con l'utente)
-MAIN_SESSION_ONLY = {"MEMORY.md", "BOOTSTRAP.md"}
+MAIN_SESSION_ONLY = {"MEMORY.md"}
 
 # File letti solo nel loop heartbeat
 HEARTBEAT_ONLY = {"HEARTBEAT.md"}

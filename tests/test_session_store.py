@@ -48,3 +48,20 @@ def test_session_store_list_sorted():
         keys = [item["key"] for item in snapshots]
         assert route_a.session_key in keys
         assert route_b.session_key in keys
+
+
+def test_session_history_persists_compact_conversation_only():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = SessionStore(tmp)
+        key = "dashboard:chat:abc"
+        store.save_messages(key, [
+            {"role": "system", "content": "large prompt"},
+            {"role": "user", "content": "ciao"},
+            {"role": "assistant", "content": "uso tool", "tool_calls": [{"id": "1"}]},
+            {"role": "tool_result", "content": "x" * 10000},
+            {"role": "assistant", "content": "risposta finale"},
+        ])
+        assert store.load_messages(key) == [
+            {"role": "user", "content": "ciao"},
+            {"role": "assistant", "content": "risposta finale"},
+        ]

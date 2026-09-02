@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import threading
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
@@ -17,6 +18,49 @@ import config as cfg
 from core.memory import MemoryManager
 from core.plugins import PluginManager
 from core.session_store import SessionStore
+
+
+_MEMORY_DISK_CACHE: dict[str, tuple[float, dict]] = {}
+_MEMORY_DISK_LOCK = threading.Lock()
+
+
+def _memory_disk_usage(memory_dir: str, ttl: int = 60) -> dict:
+    """Misura ricorsiva con cache: include runtime browser, prima invisibile."""
+    now = time.time()
+    with _MEMORY_DISK_LOCK:
+        cached = _MEMORY_DISK_CACHE.get(memory_dir)
+        if cached and now - cached[0] < ttl:
+            return dict(cached[1])
+
+    total = 0
+    file_count = 0
+    browser_size = 0
+    by_category: dict[str, int] = {}
+    browser_root = os.path.join(memory_dir, "runtime", "playwright")
+    if os.path.exists(memory_dir):
+        for root, _dirs, files in os.walk(memory_dir):
+            rel = os.path.relpath(root, memory_dir)
+            category = rel.split(os.sep, 1)[0] if rel != "." else "root"
+            for name in files:
+                try:
+                    size = os.path.getsize(os.path.join(root, name))
+                except OSError:
+                    continue
+                total += size
+                file_count += 1
+                by_category[category] = by_category.get(category, 0) + size
+                if root == browser_root or root.startswith(browser_root + os.sep):
+                    browser_size += size
+    result = {
+        "disk_total_size": total,
+        "disk_files": file_count,
+        "runtime_size": by_category.get("runtime", 0),
+        "browser_cache_size": browser_size,
+        "size_by_category": by_category,
+    }
+    with _MEMORY_DISK_LOCK:
+        _MEMORY_DISK_CACHE[memory_dir] = (now, result)
+    return dict(result)
 
 
 def _tail_jsonl(path: str, limit: int = 50) -> list[dict]:
@@ -64,8 +108,12 @@ def collect_runtime_overview(workspace_dir: str) -> dict:
 def collect_memory_overview(workspace_dir: str) -> dict:
     memory_dir = os.path.join(workspace_dir, "memory")
     memory = MemoryManager(memory_dir)
+    stats = memory.stats()
+    stats.update(_memory_disk_usage(memory_dir))
+    stats["content_size"] = stats.get("total_size", 0)
+    stats["total_size"] = stats.get("disk_total_size", stats.get("total_size", 0))
     return {
-        "stats": memory.stats(),
+        "stats": stats,
         "profile": memory.get_profile(),
         "patterns": memory.get_patterns(),
     }

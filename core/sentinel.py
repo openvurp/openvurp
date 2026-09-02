@@ -61,13 +61,11 @@ def make_ollama_check(base_url: str, timeout: float = 3.0) -> Callable[[], bool]
 _DOWN_NOTICES = {
     "internet": "🌐 Internet non risponde. Continuo a lavorare in locale e ti avviso appena torna.",
     "ollama": "🧠 Ollama non risponde: senza di lui non posso pensare. Lo tengo d'occhio e ti avviso quando torna.",
-    "telegram": "📡 Telegram si è staccato: provo a riagganciarlo da solo.",
 }
 
 _UP_NOTICES = {
     "internet": "🌐 Internet è tornato ({downtime} senza rete). Riprendo quello che era rimasto in sospeso.",
     "ollama": "🧠 Ollama è tornato ({downtime} di blackout). Sono di nuovo operativo.",
-    "telegram": "📡 Telegram riagganciato ({downtime} di distacco). Eccomi.",
 }
 
 

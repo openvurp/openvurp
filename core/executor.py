@@ -183,6 +183,56 @@ class Executor:
 
         return result
 
+    def _handler_timeout(self, tool: Tool) -> float:
+        """Tetto di tempo per un singolo handler."""
+        try:
+            import config as cfg
+            hard = int(getattr(cfg, "TOOL_HARD_TIMEOUT_SECONDS", 120) or 120)
+        except Exception:
+            hard = 120
+        declared = int(getattr(tool, "timeout", 0) or 0)
+        return float(max(5, min(declared or hard, hard)))
+
+    def _call_handler(self, tool: Tool, args: dict) -> ToolResult:
+        """Esegue l'handler senza poter restare appeso per sempre.
+
+        `Tool.timeout` era dichiarato ma non applicato: un handler lento (una
+        ricerca su un mount di rete, una richiesta senza timeout) congelava il
+        turno finche' non scadeva il provider, e l'utente vedeva solo lo spinner.
+        Deve essere un thread daemon esplicito: quelli di ThreadPoolExecutor
+        non lo sono e l'interprete li aspetta all'uscita, il che sposterebbe
+        semplicemente il blocco dal turno alla chiusura di openvurp.
+        """
+        import threading
+
+        limit = self._handler_timeout(tool)
+        box: dict[str, object] = {}
+
+        def _run():
+            try:
+                box["value"] = tool.handler(**args)
+            except BaseException as exc:      # rilanciata sul thread chiamante
+                box["error"] = exc
+
+        worker = threading.Thread(
+            target=_run, daemon=True, name=f"tool-{tool.name}",
+        )
+        worker.start()
+        worker.join(timeout=limit)
+
+        if worker.is_alive():
+            return ToolResult.fail(
+                f"Il tool '{tool.name}' non ha risposto entro {int(limit)}s ed è stato "
+                f"abbandonato. NON ripetere la stessa chiamata: restringi il "
+                f"lavoro (un percorso più specifico, meno dati) oppure usa un "
+                f"altro strumento.",
+                error_type=ErrorType.TIMEOUT,
+                tool_name=tool.name,
+            )
+        if "error" in box:
+            raise box["error"]
+        return box.get("value")
+
     def _execute_with_retry(self, tool: Tool, args: dict) -> ToolResult:
         """Esegue con retry policy."""
         max_attempts = 1 + tool.retry_policy.max_retries
@@ -194,7 +244,7 @@ class Executor:
 
             start = time.time()
             try:
-                result = tool.handler(**args)
+                result = self._call_handler(tool, args)
                 if not isinstance(result, ToolResult):
                     result = ToolResult.ok(str(result))
                 result.tool_name = tool.name
@@ -353,6 +403,14 @@ class Executor:
         """Breve descrizione dell'azione per conferma utente."""
         if tool_name == "shell":
             return args.get("command", "?")[:100]
+        if tool_name == "swarm_spawn":
+            # Chi approva deve leggere COSA nasce, non uno schema JSON.
+            engine = " / ".join(
+                x for x in (str(args.get("backend", "") or ""),
+                            str(args.get("model", "") or "")) if x
+            ) or "il tuo motore attuale"
+            return (f"convoca l'agente «{args.get('name', '?')}» — "
+                    f"{args.get('role', 'ruolo non indicato')} [{engine}]")
         return f"{tool_name}({json.dumps(args, ensure_ascii=False)[:100]})"
 
     def _audit_policy_decision(self, tool_name: str, args: dict, decision,

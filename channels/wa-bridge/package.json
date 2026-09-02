@@ -1,0 +1,10 @@
+{
+  "name": "openvurp-wa-bridge",
+  "private": true,
+  "type": "module",
+  "description": "Ponte fra openvurp e WhatsApp Web via Baileys (non ufficiale).",
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.16",
+    "qrcode": "^1.5.4"
+  }
+}

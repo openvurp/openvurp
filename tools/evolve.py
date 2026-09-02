@@ -124,10 +124,10 @@ def _read_self_handler(file: str) -> str:
     if not filename:
         return "[ERROR] Parameter 'file' is required."
 
-    if filename not in EVOLVABLE_FILES and filename != "BOOTSTRAP.md":
+    if filename not in EVOLVABLE_FILES:
         return (
             f"[ERROR] '{filename}' is not a workspace file. "
-            f"File ammessi: {', '.join(sorted(EVOLVABLE_FILES | {'BOOTSTRAP.md'}))}"
+            f"Allowed files: {', '.join(sorted(EVOLVABLE_FILES))}"
         )
 
     openvurp_dir = _get_openvurp_dir()
@@ -141,20 +141,6 @@ def _read_self_handler(file: str) -> str:
         return f"[INFO] {filename} non esiste ancora."
     except OSError as e:
         return f"[ERROR] Cannot read {filename}: {e}"
-
-
-def _delete_bootstrap_handler(**_args) -> str:
-    """Handler per cancellare BOOTSTRAP.md dopo l'onboarding."""
-    openvurp_dir = _get_openvurp_dir()
-    _, filepath = resolve_workspace_file(openvurp_dir, "BOOTSTRAP.md")
-
-    try:
-        os.remove(filepath)
-        return "[OK] BOOTSTRAP.md cancellato. L'onboarding è completo — sei tu adesso."
-    except FileNotFoundError:
-        return "[INFO] BOOTSTRAP.md does not exist — onboarding was already complete."
-    except OSError as e:
-        return f"[ERROR] Cannot delete BOOTSTRAP.md: {e}"
 
 
 # ── Tool Definitions ──
@@ -193,31 +179,18 @@ READ_SELF_TOOL = Tool(
     description=(
         "Leggi il contenuto attuale di un file workspace "
         "(SOUL.md, IDENTITY.md, AGENTS.md, USER.md, TOOLS.md, MEMORY.md, "
-        "HEARTBEAT.md, BOOTSTRAP.md). Utile per capire chi sei prima di evolverti."
+        "HEARTBEAT.md). Useful to know who you are before evolving."
     ),
     parameters={
         "type": "object",
         "properties": {
             "file": {
                 "type": "string",
-                "description": "Nome del file da leggere",
-                "enum": sorted(EVOLVABLE_FILES | {"BOOTSTRAP.md"}),
+                "description": "Name of the file to read",
+                "enum": sorted(EVOLVABLE_FILES),
             },
         },
         "required": ["file"],
     },
     handler=_read_self_handler,
-)
-
-DELETE_BOOTSTRAP_TOOL = Tool(
-    name="delete_bootstrap",
-    description=(
-        "Cancella BOOTSTRAP.md dopo aver completato l'onboarding. "
-        "Usalo quando il primo setup è finito e sai chi sei."
-    ),
-    parameters={
-        "type": "object",
-        "properties": {},
-    },
-    handler=_delete_bootstrap_handler,
 )

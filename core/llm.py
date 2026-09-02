@@ -50,7 +50,9 @@ class LLMResponse:
 
 class LLMClient:
     def __init__(self, backend: str, model: str, **kwargs):
-        self.backend = backend
+        aliases = {"claude": "claude_cli", "chatgpt_codex": "codex"}
+        normalized = (backend or "").strip().lower()
+        self.backend = aliases.get(normalized, normalized)
         self.model = model
         self.api_key = kwargs.get("api_key", "")
         self.base_url = kwargs.get("base_url", "")
@@ -72,6 +74,10 @@ class LLMClient:
         self._ollama_tools_supported: bool | None = None
 
         self._client = None
+        self._last_usage = (0, 0)
+        # Valorizzata quando un percorso privilegiato non è disponibile e il
+        # runtime ripiega su una modalità con meno capacità.
+        self.degraded_reason = ""
         self._init_client()
 
     @property
@@ -80,6 +86,19 @@ class LLMClient:
         if self.backend == "ollama":
             return self._ollama_tools_supported is not False
         return self.backend in ("openai", "openai_compatible", "anthropic", "groq")
+
+    @property
+    def supports_text_streaming(self) -> bool:
+        """Il backend semplice può consegnare testo prima del completamento?"""
+        # Gli altri provider passano dal percorso function-calling streamed.
+        # Codex CLI non usa i tool openvurp nativi, ma l'App Server espone i
+        # delta testuali reali anche per questo percorso semplice.
+        return self.backend == "codex"
+
+    @property
+    def supports_tool_transport(self) -> bool:
+        """Può ricevere gli schemi tool strutturati del runtime?"""
+        return self.supports_function_calling or self.backend == "codex"
 
     def _init_client(self):
         """Inizializza il client per il backend."""
@@ -108,6 +127,37 @@ class LLMClient:
             if self.api_key:
                 kw["api_key"] = self.api_key
             self._client = Groq(**kw)
+        elif b in ("codex", "claude_cli"):
+            import config as cfg
+            import os
+            from core.cli_backends import CodexCLIBackend, ClaudeCLIBackend
+
+            workspace = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if b == "codex":
+                self._client = CodexCLIBackend(
+                    binary=getattr(cfg, "CODEX_CLI", "codex"),
+                    model=self.model,
+                    workspace=workspace,
+                    timeout=getattr(cfg, "CODEX_TIMEOUT_SECONDS", 300),
+                    max_context_chars=getattr(cfg, "CODEX_CONTEXT_MAX_CHARS", 12000),
+                    require_subscription_login=getattr(
+                        cfg, "CODEX_REQUIRE_CHATGPT_LOGIN", True
+                    ),
+                    sandbox=getattr(cfg, "CODEX_SANDBOX", "read-only"),
+                )
+            else:
+                self._client = ClaudeCLIBackend(
+                    binary=getattr(cfg, "CLAUDE_CLI", "claude"),
+                    model=self.model,
+                    workspace=workspace,
+                    timeout=getattr(cfg, "CLAUDE_CLI_TIMEOUT_SECONDS", 300),
+                    max_context_chars=getattr(
+                        cfg, "CLAUDE_CLI_CONTEXT_MAX_CHARS", 24000
+                    ),
+                    require_subscription_login=getattr(
+                        cfg, "CLAUDE_CLI_REQUIRE_SUBSCRIPTION_LOGIN", True
+                    ),
+                )
 
     # ── Chiamate semplici (senza tool — backward compatible) ──
 
@@ -145,7 +195,108 @@ class LLMClient:
 
         input_tokens = self._estimate_input_tokens(messages)
         output_tokens = len(text) // 4
+        if self.backend in ("codex", "claude_cli") and any(self._last_usage):
+            input_tokens, output_tokens = self._last_usage
 
+        return text, duration, input_tokens, output_tokens
+
+    def call_streamed(
+        self, messages: list[dict], on_text=None, on_event=None,
+        tools_schema: list[dict] | None = None, on_tool=None, **kwargs,
+    ) -> str:
+        """Chiamata testuale con callback sui delta prodotti dal provider.
+
+        Per Codex usa l'App Server. Se questo non è disponibile e ancora non è
+        stato mostrato alcun testo, ripiega sulla chiamata sincrona senza
+        rischiare di duplicare una risposta parzialmente già visibile.
+        """
+        if self.backend != "codex":
+            text = self.call(messages, **kwargs)
+            if text and on_text:
+                on_text(text)
+            return text
+
+        if self._cache:
+            cached = self._cache.get(messages, self.model)
+            if cached is not None:
+                if cached and on_text:
+                    on_text(cached)
+                return cached
+
+        emitted = {"n": 0}
+        activity = {"n": 0}
+
+        def _emit(delta: str):
+            if not delta:
+                return
+            emitted["n"] += 1
+            if on_text:
+                on_text(delta)
+
+        def _event(event: dict):
+            method = str(event.get("method", "") or "") if isinstance(event, dict) else ""
+            item = ((event.get("params") or {}).get("item") or {}) \
+                if isinstance(event, dict) else {}
+            if (method == "item/started"
+                    and item.get("type") not in {"agentMessage", "reasoning"}):
+                activity["n"] += 1
+            if on_event:
+                on_event(event)
+
+        def _tool(name: str, arguments: dict):
+            activity["n"] += 1
+            if on_tool is None:
+                raise LLMError(
+                    f"Tool dinamico '{name}' senza executor",
+                    retryable=False, backend=self.backend,
+                )
+            return on_tool(name, arguments)
+
+        try:
+            result = self._client.run_stream(
+                messages, on_text=_emit, on_event=_event,
+                tools_schema=tools_schema, on_tool=_tool,
+            )
+            self._last_usage = (result.input_tokens, result.output_tokens)
+            text = result.text
+        except Exception as exc:
+            if emitted["n"] or activity["n"]:
+                raise LLMError(
+                    str(exc), retryable=self._is_retryable(exc), backend=self.backend,
+                ) from exc
+            # Compatibilità con versioni Codex prive di App Server: nessun
+            # delta è arrivato, quindi il fallback non può creare duplicati.
+            # Su questo percorso i dynamic tools NON esistono: l'agente resta
+            # capace di agire solo grazie al protocollo testuale ```TOOL:, e
+            # chi guarda deve sapere che sta girando in modalità ridotta.
+            self.degraded_reason = (
+                f"Codex App Server non disponibile ({str(exc)[:160]}): "
+                f"nessun dynamic tool, resta attivo solo il protocollo testuale."
+            )
+            text = self.call(messages, **kwargs)
+            if text and on_text:
+                on_text(text)
+
+        if self._cache and text:
+            self._cache.put(messages, text, self.model)
+        return text
+
+    def call_streamed_with_timing(
+        self, messages: list[dict], on_text=None, on_event=None,
+        tools_schema: list[dict] | None = None, on_tool=None, **kwargs,
+    ) -> tuple[str, int, int, int]:
+        """Streaming testuale con timing e uso token normalizzato."""
+        start = time.time()
+        text = self.call_streamed(
+            messages, on_text=on_text, on_event=on_event,
+            tools_schema=tools_schema, on_tool=on_tool, **kwargs,
+        )
+        duration = int((time.time() - start) * 1000)
+
+        input_tokens = self._estimate_input_tokens(messages, tools_schema)
+        output_tokens = len(text) // 4
+        if self.backend in ("codex", "claude_cli") and any(self._last_usage):
+            input_tokens, output_tokens = self._last_usage
         return text, duration, input_tokens, output_tokens
 
     # ── Function calling nativo ──
@@ -187,7 +338,7 @@ class LLMClient:
 
         input_tokens, output_tokens = self._extract_usage(response.raw)
         if input_tokens is None:
-            input_tokens = self._estimate_input_tokens(messages)
+            input_tokens = self._estimate_input_tokens(messages, tools_schema)
         if output_tokens is None:
             output_tokens = len(response.text) // 4 + sum(
                 len(json.dumps(tc.args)) // 4 for tc in response.tool_calls
@@ -240,7 +391,7 @@ class LLMClient:
 
         input_tokens, output_tokens = self._extract_usage(response.raw)
         if input_tokens is None:
-            input_tokens = self._estimate_input_tokens(messages)
+            input_tokens = self._estimate_input_tokens(messages, tools_schema)
         if output_tokens is None:
             output_tokens = len(response.text) // 4 + sum(
                 len(json.dumps(tc.args)) // 4 for tc in response.tool_calls
@@ -866,6 +1017,10 @@ class LLMClient:
                 return self._call_anthropic(model, messages)
             elif backend == "groq":
                 return self._call_groq(model, messages)
+            elif backend in ("codex", "claude_cli"):
+                result = self._client.run(messages)
+                self._last_usage = (result.input_tokens, result.output_tokens)
+                return result.text
             else:
                 raise LLMError(f"Backend sconosciuto: {backend}")
         except LLMError:
@@ -1000,7 +1155,8 @@ class LLMClient:
 
     # ── Helpers ──
 
-    def _estimate_input_tokens(self, messages: list[dict]) -> int:
+    def _estimate_input_tokens(self, messages: list[dict],
+                               tools_schema: list[dict] | None = None) -> int:
         parts = []
         for m in messages:
             c = m.get("content", "")
@@ -1012,7 +1168,13 @@ class LLMClient:
                         parts.append(block.get("text", block.get("content", "")))
                     elif isinstance(block, str):
                         parts.append(block)
-        return len(" ".join(parts)) // 4
+        chars = len(" ".join(parts))
+        if tools_schema:
+            try:
+                chars += len(json.dumps(tools_schema, ensure_ascii=False, separators=(",", ":")))
+            except (TypeError, ValueError):
+                chars += len(str(tools_schema))
+        return chars // 4
 
     def _is_retryable(self, error: Exception) -> bool:
         """Determina se un errore e retryable."""
@@ -1070,8 +1232,17 @@ def create_llm_client(backend: str = "", model: str = "") -> LLMClient:
     """Factory: crea LLMClient dalla configurazione."""
     import config as cfg
 
-    resolved_backend = backend or cfg.LLM_BACKEND
-    resolved_model = model or cfg.LLM_MODEL
+    aliases = {"claude": "claude_cli", "chatgpt_codex": "codex"}
+    raw_backend = (backend or cfg.LLM_BACKEND).strip().lower()
+    resolved_backend = aliases.get(raw_backend, raw_backend)
+    if model:
+        resolved_model = model
+    elif resolved_backend == "codex":
+        resolved_model = getattr(cfg, "CODEX_MODEL", "gpt-5.6-luna")
+    elif resolved_backend == "claude_cli":
+        resolved_model = getattr(cfg, "CLAUDE_CLI_MODEL", "sonnet")
+    else:
+        resolved_model = cfg.LLM_MODEL
     kwargs = {
         "temperature": getattr(cfg, 'TEMPERATURE', 0.7),
         "tool_temperature": getattr(cfg, 'TOOL_TEMPERATURE', 0.2),

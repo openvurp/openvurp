@@ -139,13 +139,7 @@ class ChannelRouter:
         """Aggiunge un canale dalla configurazione."""
         name = channel_name.strip().lower()
 
-        if name == "telegram":
-            from channels.telegram import TelegramChannel
-            token = getattr(config, 'TELEGRAM_TOKEN', os.environ.get('TELEGRAM_TOKEN', ''))
-            ch = TelegramChannel(token=token)
-            self.add(name, ch)
-
-        elif name == "discord":
+        if name == "discord":
             from channels.discord import DiscordChannel
             token = getattr(config, 'DISCORD_TOKEN', os.environ.get('DISCORD_TOKEN', ''))
             ch = DiscordChannel(token=token)

@@ -42,11 +42,11 @@ def _run(command: list[str], env: dict | None = None) -> tuple[bool, str]:
 
 def browser_setup_handler(
     install_package: bool = True,
-    browsers: str = "chromium firefox webkit",
+    browsers: str = "chromium",
     channels: str = "",
     with_deps: bool = False,
 ) -> ToolResult:
-    browsers = " ".join(str(browsers or "").split()) or "chromium firefox webkit"
+    browsers = " ".join(str(browsers or "").split()) or "chromium"
     channels = " ".join(str(channels or "").split())
     steps: list[str] = []
     os.makedirs(PLAYWRIGHT_VENDOR_DIR, exist_ok=True)
@@ -54,7 +54,6 @@ def browser_setup_handler(
     env = os.environ.copy()
     env["PYTHONPATH"] = PLAYWRIGHT_VENDOR_DIR + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     env["PLAYWRIGHT_BROWSERS_PATH"] = PLAYWRIGHT_BROWSERS_DIR
-    env["PLAYWRIGHT_SKIP_BROWSER_GC"] = "1"
 
     if install_package:
         ok, output = _run(

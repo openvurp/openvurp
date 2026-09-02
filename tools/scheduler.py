@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import threading
 import time
 from datetime import datetime, timedelta
@@ -83,8 +84,13 @@ def _check_and_send():
             continue
 
         if now >= when:
-            # È il momento — invia
+            # È il momento — esegui
             _execute_entry(entry)
+            # Se è ricorrente, riprogramma per il prossimo ciclo
+            if entry.get("recurring"):
+                entry = _rollover(entry, when)
+                if entry is not None:
+                    remaining.append(entry)
             sent = True
         else:
             remaining.append(entry)
@@ -93,11 +99,43 @@ def _check_and_send():
         _save_schedule(remaining)
 
 
+def _rollover(entry: dict, last_when: datetime) -> dict | None:
+    """Ricalcola il prossimo 'when' per un job ricorrente (daily/hourly)."""
+    import re
+    pattern = entry.get("recurring")  # es. "daily", "hourly"
+    if pattern == "daily":
+        # domani alla stessa ora
+        entry["when"] = (last_when + timedelta(days=1)).isoformat()
+        return entry
+    if pattern == "hourly":
+        entry["when"] = (last_when + timedelta(hours=1)).isoformat()
+        return entry
+    m = re.match(r"^every\s+(\d+)m$", pattern or "")
+    if m:
+        entry["when"] = (last_when + timedelta(minutes=int(m.group(1)))).isoformat()
+        return entry
+    return None
+
+
 def _execute_entry(entry: dict):
     """Esegue una entry della schedule."""
+    action = entry.get("action", "notify")
     message = entry.get("message", "")
     channel = entry.get("channel", "telegram")
     voice = entry.get("voice", False)
+
+    if action == "shell":
+        cmd = entry.get("command", "")
+        if not cmd:
+            return
+        try:
+            subprocess.run(
+                cmd, shell=True, check=False,
+                timeout=600, capture_output=True, text=True,
+            )
+        except Exception:
+            pass
+        return
 
     if not message:
         return
@@ -185,17 +223,26 @@ def _parse_when(when_str: str) -> datetime | None:
 
 
 def schedule_notify_handler(message: str, when: str, label: str = "",
-                            voice: bool = False) -> ToolResult:
-    """Programma un messaggio da inviare all'utente in futuro."""
-    if not message.strip():
-        return ToolResult.fail("No message to schedule")
+                            voice: bool = False,
+                            action: str = "notify",
+                            command: str = "",
+                            recurring: str = "") -> ToolResult:
+    """Programma un messaggio o un'azione da eseguire in futuro.
 
+    action: "notify" (default, manda un messaggio Telegram) oppure "shell"
+            (esegue un comando di sistema — es. `python3 scripts/send_giornale.py mattina`).
+    recurring: "daily" | "hourly" | "every Nm" per ripetere automaticamente.
+    """
     target = _parse_when(when)
     if not target:
         return ToolResult.fail(
             f"Non capisco quando: '{when}'. "
             f"Usa formato: '30m', '2h', '1h30m', '15:30', o ISO '2026-03-31T15:30:00'"
         )
+    if action not in ("notify", "shell"):
+        return ToolResult.fail(f"action non valido: '{action}' (usa 'notify' o 'shell')")
+    if action == "shell" and not command.strip():
+        return ToolResult.fail("action='shell' richiede 'command' non vuoto")
 
     # Aggiungi alla schedule
     entries = _load_schedule()
@@ -207,6 +254,11 @@ def schedule_notify_handler(message: str, when: str, label: str = "",
         "channel": "telegram",
         "created": datetime.now().isoformat(),
     }
+    if action == "shell":
+        entry["action"] = "shell"
+        entry["command"] = command
+    if recurring:
+        entry["recurring"] = recurring
     entries.append(entry)
     _save_schedule(entries)
 
@@ -274,32 +326,46 @@ def cancel_schedule_handler(index: int = 0) -> ToolResult:
 SCHEDULE_NOTIFY_TOOL = Tool(
     name="schedule_notify",
     description=(
-        "Programma un messaggio da inviare in futuro su Telegram. "
-        "Puoi programmare promemoria, avvisi, messaggi a qualsiasi orario. "
-        "Formato 'when': '30m' (30 minuti), '2h' (2 ore), '15:30' (orario), "
-        "'1d' (1 giorno), o ISO datetime."
+        "Programma un messaggio o un'azione da eseguire in futuro. "
+        "Per messaggi: usa action='notify' (default). "
+        "Per eseguire un comando di sistema (es. generare e inviare un PDF): action='shell' + 'command'. "
+        "Per ripetere automaticamente: recurring='daily' | 'hourly' | 'every Nm'. "
+        "Formato 'when': '30m', '2h', '1h30m', '15:30', '1d', o ISO datetime."
     ),
     parameters={
         "type": "object",
         "properties": {
             "message": {
                 "type": "string",
-                "description": "Il messaggio da inviare",
+                "description": "Il messaggio da inviare (per action='notify').",
             },
             "when": {
                 "type": "string",
-                "description": "Quando inviare: '30m', '2h', '15:30', '1d', ISO datetime",
+                "description": "Quando eseguire: '30m', '2h', '15:30', '1d', ISO datetime.",
             },
             "label": {
                 "type": "string",
-                "description": "Etichetta breve per il promemoria (opzionale)",
+                "description": "Etichetta breve per il promemoria (opzionale).",
             },
             "voice": {
                 "type": "boolean",
-                "description": "Invia anche come messaggio vocale (default: false)",
+                "description": "Invia anche come messaggio vocale (default: false).",
+            },
+            "action": {
+                "type": "string",
+                "description": "'notify' (default) o 'shell' (esegue un comando).",
+                "enum": ["notify", "shell"],
+            },
+            "command": {
+                "type": "string",
+                "description": "Comando shell da eseguire (richiesto se action='shell').",
+            },
+            "recurring": {
+                "type": "string",
+                "description": "'daily' | 'hourly' | 'every Nm' per ripetere automaticamente.",
             },
         },
-        "required": ["message", "when"],
+        "required": ["when"],
     },
     handler=schedule_notify_handler,
     timeout=10,

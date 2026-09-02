@@ -75,11 +75,19 @@ class AgentStateMachine:
     STATE_FILE = "agent_state.json"
     EVENTS_DIR = "agent_state"
 
-    def __init__(self, memory_dir: str):
+    def __init__(self, memory_dir: str, scope_key: str = ""):
         self.memory_dir = memory_dir
-        self.path = os.path.join(memory_dir, self.STATE_FILE)
-        self.events_dir = os.path.join(memory_dir, self.EVENTS_DIR)
+        scope = str(scope_key or "").strip()
+        if scope:
+            digest = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:20]
+            route_root = os.path.join(memory_dir, "route_state", digest)
+            self.path = os.path.join(route_root, self.STATE_FILE)
+            self.events_dir = os.path.join(route_root, self.EVENTS_DIR)
+        else:
+            self.path = os.path.join(memory_dir, self.STATE_FILE)
+            self.events_dir = os.path.join(memory_dir, self.EVENTS_DIR)
         os.makedirs(memory_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
         os.makedirs(self.events_dir, exist_ok=True)
         self.current: ActiveTask | None = self._load()
 

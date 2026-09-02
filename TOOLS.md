@@ -29,9 +29,7 @@ This file is a cheat sheet for the openvurp workspace. It does not grant tool ac
 ## Useful Commands
 
 - Secret scan: `python3 scripts/secret_scan.py`
-- Compile check: `python3 -m compileall -q core tools tests scripts reset.py`
-- Reset inventory: `python3 reset.py --list`
-- Update reset baseline after code changes: `python3 reset.py --baseline-only`
+- Compile check: `python3 -m compileall -q core tools tests scripts`
 - Test runner when available: `python3 -m pytest -q`
 - Fallback tests: run individual `tests/test_*.py` files.
 
@@ -41,7 +39,6 @@ This file is a cheat sheet for the openvurp workspace. It does not grant tool ac
 - File transcription can stay available with `AUDIO_ENABLED=true` and `AUDIO_TRANSCRIBE_ENABLED=true`.
 - Disable all audio handling with `AUDIO_ENABLED=false`.
 - Enable speech only when wanted: `VOICE_ENABLED=true`, then optionally `VOICE_TOOLS_ENABLED=true` and `MIC_ENABLED=true`.
-- Telegram voice replies are separate: `TELEGRAM_VOICE_REPLY_ENABLED=true`.
 - Runtime CLI toggles: `/voice on|off`, `/mic on|off`, `/audio on|off`.
 
 ## Operating Notes

@@ -106,7 +106,41 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return list(self._tools.keys())
 
-    def prompt_section(self, native_tools: bool = False) -> str:
+    def compact_index(self, names: set[str] | None = None) -> str:
+        """Indice compatto dei tool per i backend CLI agentici.
+
+        Codex riceve gli schemi completi come dynamic tools dell'App Server. Se
+        quel canale non e' disponibile (versione vecchia del CLI, App Server che
+        non parte) il modello resterebbe senza alcun modo di agire: questo
+        indice gli lascia sempre il protocollo testuale ```TOOL:nome, che il
+        runtime sa comunque interpretare.
+        """
+        selected = [
+            tool for name, tool in self._tools.items()
+            if names is None or name in names
+        ]
+        if not selected:
+            return ""
+        lines = ["## TOOL DISPONIBILI (indice)\n"]
+        lines.append(
+            "Questi sono i tuoi tool reali. Se il client ti espone dynamic tools "
+            "usa quelli; altrimenti invocali con un blocco ```TOOL:nome_tool "
+            "seguito dagli argomenti JSON. Un tool per messaggio.\n"
+        )
+        for tool in selected:
+            params = ", ".join((tool.parameters or {}).get("properties", {}).keys())
+            desc = " ".join(str(tool.description or "").split())[:150]
+            lines.append(f"- `{tool.name}`({params}): {desc}")
+        lines.append("")
+        lines.append("Formato:")
+        lines.append("```TOOL:read_file")
+        lines.append('{"path": "README.md"}')
+        lines.append("```")
+        lines.append("Per comandi di sistema usa ```SHELL con il comando dentro.")
+        return "\n".join(lines)
+
+    def prompt_section(self, native_tools: bool = False,
+                       names: set[str] | None = None) -> str:
         """Genera la sezione tool per il system prompt.
 
         Con function calling nativo (native_tools=True) gli schemi dei tool
@@ -115,7 +149,11 @@ class ToolRegistry:
         malformate (es. ```TOOL:read_file"> ). In quel caso non emettiamo
         nulla — la fonte di verità sono gli schemi nativi.
         """
-        if not self._tools or native_tools:
+        selected = [
+            tool for name, tool in self._tools.items()
+            if names is None or name in names
+        ]
+        if not selected or native_tools:
             return ""
         lines = ["## TOOL DISPONIBILI\n"]
         lines.append("Usa i blocchi ```TOOL:nome_tool per invocare un tool.")
@@ -124,7 +162,7 @@ class ToolRegistry:
             "Preferisci i tool strutturati per leggere, cercare e modificare nel workspace. "
             "Usa ```SHELL per test, git, package manager e comandi reali del sistema.\n"
         )
-        for tool in self._tools.values():
+        for tool in selected:
             lines.append(tool.schema_for_prompt())
             lines.append("")
         lines.append("Formato invocazione:")
@@ -138,10 +176,12 @@ class ToolRegistry:
         lines.append("```")
         return "\n".join(lines)
 
-    def to_openai_schema(self) -> list[dict]:
+    def to_openai_schema(self, names: set[str] | None = None) -> list[dict]:
         """Genera schema tool per OpenAI/Groq function calling."""
         tools = []
-        for tool in self._tools.values():
+        for name, tool in self._tools.items():
+            if names is not None and name not in names:
+                continue
             schema = {
                 "type": "function",
                 "function": {
@@ -155,10 +195,12 @@ class ToolRegistry:
             tools.append(schema)
         return tools
 
-    def to_anthropic_schema(self) -> list[dict]:
+    def to_anthropic_schema(self, names: set[str] | None = None) -> list[dict]:
         """Genera schema tool per Anthropic function calling."""
         tools = []
-        for tool in self._tools.values():
+        for name, tool in self._tools.items():
+            if names is not None and name not in names:
+                continue
             schema = {
                 "name": tool.name,
                 "description": tool.description,

@@ -70,7 +70,7 @@ class AgentKernel:
     }
     WRITE_TOOLS = {
         "write_file", "edit_file", "edit_lines", "append_file",
-        "evolve_self", "delete_bootstrap", "scaffold_plugin",
+        "evolve_self", "scaffold_plugin",
     }
     VERIFY_TOOLS = {
         "shell", "doctor", "browser", "browser_devtools", "process_read",
@@ -420,7 +420,7 @@ class AgentKernel:
         verify_markers = (
             "test", "pytest", "unittest", "compileall", "ruff", "mypy",
             "tsc", "eslint", "npm run", "pnpm", "cargo test", "go test",
-            "secret_scan", "doctor", "reset.py --list",
+            "secret_scan", "doctor",
         )
         return any(marker in command for marker in verify_markers)
 

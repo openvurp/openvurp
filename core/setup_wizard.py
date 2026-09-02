@@ -32,6 +32,22 @@ CLOUD_KEY = {
     "groq": "GROQ_API_KEY",
 }
 
+# Backend che usano il login personale di un CLI già installato: non chiedono
+# API key, ma richiedono che quel CLI sia autenticato.
+SUBSCRIPTION_BACKENDS = {
+    "codex": ("codex", "gpt-5.6-luna", "`codex login` (Accesso con ChatGPT)"),
+    "claude_cli": ("claude", "sonnet", "`claude` e completa l'accesso"),
+}
+BACKENDS = ["ollama", "codex", "claude_cli", "openai", "anthropic", "groq"]
+BACKEND_HELP = {
+    "ollama": "modelli locali o cloud via Ollama",
+    "codex": "abbonamento ChatGPT tramite Codex CLI",
+    "claude_cli": "abbonamento Claude.ai tramite Claude Code",
+    "openai": "API OpenAI a consumo",
+    "anthropic": "API Anthropic a consumo",
+    "groq": "API Groq a consumo",
+}
+
 
 # ── Helper puri (testabili) ──────────────────────────────────────────────
 
@@ -82,6 +98,8 @@ def needs_setup() -> bool:
     model = env.get("LLM_MODEL", "").strip()
     if not backend or not model:
         return True
+    if backend in SUBSCRIPTION_BACKENDS:
+        return False  # l'accesso lo verifica il backend al primo turno
     keyname = CLOUD_KEY.get(backend)
     if keyname and not env.get(keyname, "").strip():
         return True
@@ -108,6 +126,18 @@ def write_env(values: dict[str, str]) -> Path:
         if value:
             os.environ[key] = str(value)
     return ENV_PATH
+
+
+def subscription_login_status(backend: str) -> tuple[bool, str]:
+    """Stato del login del CLI in abbonamento, senza far esplodere il wizard."""
+    try:
+        from core.cli_backends import claude_login_status, codex_login_status
+        binary = SUBSCRIPTION_BACKENDS[backend][0]
+        if backend == "codex":
+            return codex_login_status(binary)
+        return claude_login_status(binary)
+    except Exception as exc:
+        return False, f"stato login non verificabile: {exc}"
 
 
 def detect_ollama_models(base_url: str = "http://localhost:11434") -> list[str]:
@@ -165,14 +195,26 @@ def run_wizard(force: bool = False) -> bool:
     # che c'è già (ri-lancio sicuro, es. alla rinascita dopo un reset).
     cur = parse_env(ENV_PATH.read_text(encoding="utf-8")) if ENV_PATH.exists() else {}
 
+    for name in BACKENDS:
+        console.print(f"    [dim]{name:<11}[/dim] {BACKEND_HELP[name]}")
     backend = Prompt.ask(
         "[cyan]LLM backend[/cyan]",
-        choices=["ollama", "openai", "anthropic", "groq"],
+        choices=BACKENDS,
         default=cur.get("LLM_BACKEND") or "ollama",
     )
     values["LLM_BACKEND"] = backend
 
-    if backend == "ollama":
+    if backend in SUBSCRIPTION_BACKENDS:
+        binary, default_model, how = SUBSCRIPTION_BACKENDS[backend]
+        logged_in, detail = subscription_login_status(backend)
+        if logged_in:
+            console.print(f"  [green]✓ {detail}[/green]")
+        else:
+            console.print(f"  [yellow]{detail}[/yellow] [dim]→ {how}[/dim]")
+        values["LLM_MODEL"] = Prompt.ask(
+            "[cyan]Model[/cyan]", default=cur.get("LLM_MODEL") or default_model,
+        )
+    elif backend == "ollama":
         base_url = Prompt.ask(
             "[cyan]Ollama URL[/cyan]",
             default=cur.get("LLM_BASE_URL") or "http://localhost:11434",
@@ -207,20 +249,19 @@ def run_wizard(force: bool = False) -> bool:
         )
         values["LLM_MODEL"] = model
 
-    if Confirm.ask("\n[cyan]Connect Telegram?[/cyan]", default=False):
+    # Telegram qui e' solo un citofono in uscita: si chiacchiera con gli agenti
+    # dalla pagina web. Serve a essere raggiunti quando non sei davanti al PC.
+    if Confirm.ask("\n[cyan]Telegram notifications on your phone?[/cyan]", default=False):
         token = Prompt.ask("[cyan]Bot token[/cyan]", password=True, default="")
         if token.strip():
             values["TELEGRAM_TOKEN"] = token.strip()
             console.print(
-                "  [dim]Your owner ID is detected automatically: on the first "
-                "message to the bot, the console prints it and recognizes you.[/dim]"
+                "  [dim]Send any message to your bot, then open "
+                "api.telegram.org/bot<token>/getUpdates to read your chat id.[/dim]"
             )
-            owner = Prompt.ask(
-                "[cyan]Telegram owner ID (Enter for auto-detect)[/cyan]",
-                default="",
-            )
-            if owner.strip():
-                values["TELEGRAM_ALLOWED_USERS"] = owner.strip()
+            chat_id = Prompt.ask("[cyan]Chat id to notify[/cyan]", default="")
+            if chat_id.strip():
+                values["TELEGRAM_CHAT_ID"] = chat_id.strip()
 
     console.print("\n[bold]What do you want active?[/bold] [dim](change anytime with `openvurp --setup`)[/dim]")
     if Confirm.ask("[cyan]Web dashboard (chat from your browser)?[/cyan]", default=False):
@@ -237,13 +278,91 @@ def run_wizard(force: bool = False) -> bool:
     return True
 
 
+def current_config() -> dict[str, str]:
+    """Config effettiva del .env, per mostrarla prima di partire."""
+    if not ENV_PATH.exists():
+        return {}
+    return parse_env(ENV_PATH.read_text(encoding="utf-8"))
+
+
+def quick_engine_menu(console=None) -> bool:
+    """Cambio rapido di backend/modello, senza rifare tutto il setup.
+
+    E' la scelta che si fa piu' spesso ("oggi lo voglio su Ollama") e non deve
+    costare l'intero wizard con Telegram, dashboard e voce.
+    """
+    try:
+        from rich.prompt import Prompt
+        if console is None:
+            from rich.console import Console
+            console = Console()
+    except Exception:
+        return _quick_engine_menu_plain()
+
+    cur = current_config()
+    console.print("\n  [bold]Engine[/bold]")
+    for name in BACKENDS:
+        mark = "[green]•[/green]" if cur.get("LLM_BACKEND") == name else " "
+        console.print(f"   {mark} [cyan]{name:<11}[/cyan] [dim]{BACKEND_HELP[name]}[/dim]")
+    backend = Prompt.ask("  [cyan]backend[/cyan]", choices=BACKENDS,
+                         default=cur.get("LLM_BACKEND") or "ollama")
+    values = {"LLM_BACKEND": backend}
+
+    if backend in SUBSCRIPTION_BACKENDS:
+        _, default_model, how = SUBSCRIPTION_BACKENDS[backend]
+        logged_in, detail = subscription_login_status(backend)
+        console.print(f"  [green]✓ {detail}[/green]" if logged_in
+                      else f"  [yellow]{detail}[/yellow] [dim]→ {how}[/dim]")
+    elif backend == "ollama":
+        default_model = cur.get("LLM_MODEL") or "qwen3-coder-next:cloud"
+        models = detect_ollama_models(cur.get("LLM_BASE_URL") or "http://localhost:11434")
+        for name in models[:15]:
+            console.print(f"    [dim]- {name}[/dim]")
+    else:
+        default_model = cur.get("LLM_MODEL") or DEFAULT_CLOUD_MODEL[backend]
+        keyname = CLOUD_KEY[backend]
+        if not cur.get(keyname, "").strip():
+            key = Prompt.ask(f"  [cyan]{keyname}[/cyan]", password=True, default="")
+            if key.strip():
+                values[keyname] = key.strip()
+
+    values["LLM_MODEL"] = Prompt.ask("  [cyan]modello[/cyan]",
+                                     default=cur.get("LLM_MODEL") or default_model)
+    write_env(values)
+    console.print(f"  [green]✓[/green] {values['LLM_BACKEND']} / {values['LLM_MODEL']}")
+    return True
+
+
+def _quick_engine_menu_plain() -> bool:
+    cur = current_config()
+    backend = (input(f"backend [{'/'.join(BACKENDS)}] ({cur.get('LLM_BACKEND', 'ollama')}): ").strip()
+               or cur.get("LLM_BACKEND") or "ollama")
+    if backend in SUBSCRIPTION_BACKENDS:
+        default_model = SUBSCRIPTION_BACKENDS[backend][1]
+    elif backend == "ollama":
+        default_model = "qwen3-coder-next:cloud"
+    else:
+        default_model = DEFAULT_CLOUD_MODEL.get(backend, "")
+    model = input(f"modello ({cur.get('LLM_MODEL') or default_model}): ").strip() \
+        or cur.get("LLM_MODEL") or default_model
+    write_env({"LLM_BACKEND": backend, "LLM_MODEL": model})
+    print(f"✓ {backend} / {model}")
+    return True
+
+
 def _run_wizard_plain(force: bool) -> bool:
     """Fallback senza rich (input() puro)."""
     print("✳ openvurp setup — no files to edit by hand.")
-    backend = (input("Backend [ollama/openai/anthropic/groq] (ollama): ").strip()
+    backend = (input(f"Backend [{'/'.join(BACKENDS)}] (ollama): ").strip()
                or "ollama")
     values: dict[str, str] = {"LLM_BACKEND": backend}
-    if backend == "ollama":
+    if backend in SUBSCRIPTION_BACKENDS:
+        _, default_model, how = SUBSCRIPTION_BACKENDS[backend]
+        logged_in, detail = subscription_login_status(backend)
+        print(("✓ " if logged_in else "! ") + detail + ("" if logged_in else f" → {how}"))
+        values["LLM_MODEL"] = (input(f"Model ({default_model}): ").strip()
+                               or default_model)
+    elif backend == "ollama":
         base_url = (input("Ollama URL (http://localhost:11434): ").strip()
                     or "http://localhost:11434")
         values["LLM_BASE_URL"] = base_url
@@ -254,12 +373,12 @@ def _run_wizard_plain(force: bool) -> bool:
         values[keyname] = input(f"{keyname}: ").strip()
         values["LLM_MODEL"] = (input(f"Model ({DEFAULT_CLOUD_MODEL[backend]}): ").strip()
                                or DEFAULT_CLOUD_MODEL[backend])
-    token = input("Telegram token (Enter to skip): ").strip()
+    token = input("Telegram token for notifications (Enter to skip): ").strip()
     if token:
         values["TELEGRAM_TOKEN"] = token
-        owner = input("Telegram owner ID (Enter for auto-detect): ").strip()
-        if owner:
-            values["TELEGRAM_ALLOWED_USERS"] = owner
+        chat_id = input("Chat id to notify (Enter to skip): ").strip()
+        if chat_id:
+            values["TELEGRAM_CHAT_ID"] = chat_id
     if input("Web dashboard? [y/N]: ").strip().lower() in ("y", "yes", "s", "si"):
         values["DASHBOARD_ENABLED"] = "true"
     if input("Voice replies (TTS)? [y/N]: ").strip().lower() in ("y", "yes", "s", "si"):

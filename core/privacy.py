@@ -31,7 +31,10 @@ _SENSITIVE_PATTERNS = [
 ]
 _SENSITIVE_RE = re.compile("|".join(_SENSITIVE_PATTERNS), re.IGNORECASE)
 
-_CLOUD_BACKENDS = {"openai", "anthropic", "groq", "openai_compatible"}
+_CLOUD_BACKENDS = {
+    "openai", "anthropic", "groq", "openai_compatible",
+    "codex", "claude_cli", "claude",
+}
 
 
 @dataclass

@@ -60,7 +60,7 @@ PLAYWRIGHT_PROBE_TIMEOUT_SECONDS = 3.0
 PLAYWRIGHT_INSTALL_MSG = (
     "Playwright non pronto nel workspace. Usa `browser_setup` oppure prepara manualmente:\n"
     f"  python -m pip install --target '{PLAYWRIGHT_VENDOR_DIR}' playwright\n"
-    f"  PYTHONPATH='{PLAYWRIGHT_VENDOR_DIR}' PLAYWRIGHT_BROWSERS_PATH='{PLAYWRIGHT_BROWSERS_DIR}' python -m playwright install chromium firefox webkit"
+    f"  PYTHONPATH='{PLAYWRIGHT_VENDOR_DIR}' PLAYWRIGHT_BROWSERS_PATH='{PLAYWRIGHT_BROWSERS_DIR}' python -m playwright install chromium"
 )
 SUPPORTED_ENGINES = ("chromium", "firefox", "webkit")
 SUPPORTED_CHANNELS = (
@@ -266,7 +266,6 @@ if vendor_dir and vendor_dir not in sys.path:
     sys.path.insert(0, vendor_dir)
 if browsers_dir:
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = browsers_dir
-os.environ.setdefault("PLAYWRIGHT_SKIP_BROWSER_GC", "1")
 
 try:
     from playwright.sync_api import sync_playwright
@@ -293,7 +292,6 @@ except Exception as exc:
             pythonpath = pythonpath + os.pathsep + env["PYTHONPATH"]
         env["PYTHONPATH"] = pythonpath
         env["PLAYWRIGHT_BROWSERS_PATH"] = self._effective_browsers_dir()
-        env["PLAYWRIGHT_SKIP_BROWSER_GC"] = "1"
         command = [
             sys.executable,
             "-c",
@@ -391,7 +389,6 @@ except Exception as exc:
         effective_browsers = self._effective_browsers_dir()
         if effective_browsers:
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = effective_browsers
-        os.environ["PLAYWRIGHT_SKIP_BROWSER_GC"] = "1"
         if self._playwright_runtime is None:
             from playwright.sync_api import sync_playwright
 

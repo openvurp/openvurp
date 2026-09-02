@@ -15,6 +15,7 @@ from TUI import (
     format_runtime_estimates,
     format_gateway_summary,
     layout_editor_text,
+    markdown_to_tui_lines,
     normalize_status_event,
     pick_waiting_phrase,
     score_modal_item,
@@ -108,6 +109,20 @@ class TuiHelperTests(unittest.TestCase):
         line = format_gateway_summary({"ok": False, "host": "127.0.0.1", "port": 8421, "error": "refused"})
         self.assertIn("gateway offline", line)
         self.assertIn("refused", line)
+
+    def test_markdown_to_tui_lines_renders_common_blocks_without_markers(self):
+        source = (
+            "# Titolo\n\n**Mint Cucina Fresca** e `codice`\n\n"
+            "- uno\n- due\n\n```python\nprint('ok')\n```"
+        )
+        lines = markdown_to_tui_lines(source, 80)
+        text = "\n".join(line for line, _style in lines)
+        self.assertIn("Mint Cucina Fresca", text)
+        self.assertIn("• uno", text)
+        self.assertIn("code · python", text)
+        self.assertIn("print('ok')", text)
+        self.assertNotIn("**", text)
+        self.assertNotIn("```", text)
 
 
 if __name__ == "__main__":

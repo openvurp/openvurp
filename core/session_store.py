@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime
+import hashlib
 import json
 import os
 
@@ -66,10 +67,71 @@ class SessionSnapshot:
 class SessionStore:
     def __init__(self, memory_dir: str):
         self.root_dir = os.path.join(memory_dir, "session_store")
+        self.history_dir = os.path.join(self.root_dir, "history")
         os.makedirs(self.root_dir, exist_ok=True)
+        os.makedirs(self.history_dir, exist_ok=True)
 
     def path_for(self, key: str) -> str:
         return os.path.join(self.root_dir, f"{_safe_name(key)}.json")
+
+    def history_path_for(self, key: str) -> str:
+        digest = hashlib.sha256(str(key or "session").encode("utf-8")).hexdigest()[:20]
+        return os.path.join(self.history_dir, f"{digest}.json")
+
+    def save_messages(self, key: str, messages: list[dict]) -> str:
+        """Salva una cronologia compatta e riutilizzabile dopo il riavvio.
+
+        I system prompt e gli output tool non vengono persistiti: il primo viene
+        rigenerato, i secondi sono la parte piu' costosa e meno utile nei turni
+        successivi. Restano le domande e le risposte finali.
+        """
+        try:
+            import config as cfg
+            max_messages = int(getattr(cfg, "SESSION_HISTORY_MAX_MESSAGES", 40))
+            max_chars = int(getattr(cfg, "SESSION_HISTORY_MAX_CHARS", 60000))
+        except Exception:
+            max_messages, max_chars = 40, 60000
+
+        clean: list[dict] = []
+        for msg in messages:
+            role = str(msg.get("role", ""))
+            if role not in {"user", "assistant"} or msg.get("tool_calls"):
+                continue
+            content = msg.get("content", "")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            clean.append({"role": role, "content": content})
+        clean = clean[-max(2, max_messages):]
+        while clean and sum(len(m["content"]) for m in clean) > max_chars:
+            clean.pop(0)
+
+        path = self.history_path_for(key)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump({"key": key, "messages": clean}, handle,
+                      ensure_ascii=False, separators=(",", ":"))
+        os.replace(tmp, path)
+        return path
+
+    def load_messages(self, key: str) -> list[dict]:
+        path = self.history_path_for(key)
+        if not os.path.exists(path):
+            return []
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            messages = data.get("messages", [])
+            if not isinstance(messages, list):
+                return []
+            return [
+                {"role": item["role"], "content": item["content"]}
+                for item in messages
+                if isinstance(item, dict)
+                and item.get("role") in {"user", "assistant"}
+                and isinstance(item.get("content"), str)
+            ]
+        except (OSError, ValueError, KeyError, TypeError):
+            return []
 
     def upsert(self, route: SessionRoute, runtime_session, messages: list[dict], state: str = "idle") -> str:
         summary = runtime_session.summary()

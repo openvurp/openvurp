@@ -1,27 +1,48 @@
-"""
-openvurp Channel — Slack
+"""Slack inbound — Socket Mode, the same core as the others.
 
-Usa slack_bolt per Socket Mode o webhook.
+Socket Mode rather than webhooks: no public address needed, the bot opens the
+connection itself. It needs an app token (``xapp-``) besides the bot token
+(``xoxb-``).
 """
 
 from __future__ import annotations
 
-from channels import Channel, ChannelMessage
-from core.personality import parse_response_directive, slack_reaction_name
+import threading
+
+from channels import Channel
+from core.conversation import ChannelConversation, Incoming
 
 
 class SlackChannel(Channel):
-    """Canale Slack via slack_bolt."""
-
-    def __init__(self, bot_token: str, app_token: str = "", **kwargs):
+    def __init__(self, bot_token: str, app_token: str = "",
+                 conversation: ChannelConversation | None = None,
+                 allowed: list | None = None, on_error=None, **kwargs):
         super().__init__("slack", kwargs)
+        if not bot_token or not app_token:
+            raise ValueError(
+                "Slack needs SLACK_BOT_TOKEN (xoxb-) and SLACK_APP_TOKEN (xapp-): "
+                "the second one is for Socket Mode, which avoids exposing a public "
+                "address."
+            )
         self.bot_token = bot_token
         self.app_token = app_token
+        self.conversation = conversation
+        self.allowed = {str(x).strip() for x in (allowed or []) if str(x).strip()}
+        self.on_error = on_error
+        self._handler = None
+        self._stop = threading.Event()
+        self.stop_reason = ""
 
-        if not bot_token:
-            raise ValueError(
-                "Token Slack mancante. Imposta SLACK_BOT_TOKEN in config.py o come variabile d'ambiente."
-            )
+    def alive(self) -> bool:
+        return not self._stop.is_set()
+
+    def stop(self):
+        self._stop.set()
+        if self._handler is not None:
+            try:
+                self._handler.close()
+            except Exception:
+                pass
 
     def start(self):
         try:
@@ -29,59 +50,37 @@ class SlackChannel(Channel):
             from slack_bolt.adapter.socket_mode import SocketModeHandler
         except ImportError:
             raise ImportError(
-                "slack_bolt non installato. Installa con: pip install slack_bolt"
+                "slack-bolt non installato. Installa con: pip install 'openvurp[slack]'"
             )
 
         app = App(token=self.bot_token)
+        self._stop.clear()
 
-        @app.message("")
-        def handle_message(message, say):
-            text = message.get("text", "")
+        @app.event("message")
+        def _incoming(event, say):
+            if event.get("bot_id") or event.get("subtype"):
+                return          # the bot's own echoes and system messages
+            text = str(event.get("text", "") or "").strip()
             if not text:
                 return
+            user = str(event.get("user", ""))
+            if self.allowed and user not in self.allowed:
+                return
+            if self.conversation is None:
+                return
+            for reply in self.conversation.handle(Incoming(
+                text=text, channel="slack", peer_id=user, sender=user,
+            )):
+                say(f"*{reply.author}*\n{reply.text}"
+                    if reply.author else reply.text)
 
-            user = message.get("user", "")
-            msg = ChannelMessage(
-                text=text,
-                sender=user,
-                channel="slack",
-                raw=message,
-            )
-            response = None
-            if self._callback:
-                response = self._callback(msg)
-            directive = parse_response_directive(response)
-            if directive.kind == "reaction":
-                emoji_name = slack_reaction_name(directive.emoji)
-                if emoji_name:
-                    try:
-                        app.client.reactions_add(
-                            channel=message.get("channel"),
-                            timestamp=message.get("ts"),
-                            name=emoji_name,
-                        )
-                    except Exception:
-                        pass
-            elif directive.kind == "text":
-                say(directive.text[:4000])
-
-        self._running = True
-        if self.app_token:
-            handler = SocketModeHandler(app, self.app_token)
-            handler.start()
-        else:
-            app.start(port=3000)
-
-    def stop(self):
-        self._running = False
-
-    def send(self, message: str, channel: str = None, **kwargs):
-        """Invia messaggio a un canale Slack."""
-        if not channel:
-            return
         try:
-            from slack_sdk import WebClient
-            client = WebClient(token=self.bot_token)
-            client.chat_postMessage(channel=channel, text=message[:4000])
-        except ImportError:
-            pass
+            self._handler = SocketModeHandler(app, self.app_token)
+            self._handler.start()
+        except Exception as exc:
+            self.stop_reason = str(exc)
+            if self.on_error:
+                self.on_error(f"Slack: {exc}")
+
+    def send(self, message: str, chat_id: str = "", **kwargs):
+        return False

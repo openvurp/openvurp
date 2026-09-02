@@ -19,7 +19,9 @@ def _load_media_backend():
     except Exception:
         cfg = None
 
-    backend = getattr(cfg, "LLM_BACKEND", "ollama")
+    # La chat e la visione sono canali distinti: i backend CLI come Codex
+    # possono gestire testo/tool ma non ricevono byte immagine.
+    backend = getattr(cfg, "VISION_BACKEND", "ollama") or "ollama"
     vision_model = getattr(cfg, "VISION_MODEL", "") or getattr(cfg, "LLM_MODEL", "") or "llava"
     base_url = (
         getattr(cfg, "VISION_BASE_URL", "")
@@ -63,7 +65,10 @@ def image_analyze_handler(path: str, prompt: str = "Descrivi questa immagine in 
         elif backend in ("openai", "openai_compatible"):
             return _analyze_openai(model, b64, mime, prompt, cfg)
         else:
-            return ToolResult.fail(f"Backend {backend} non supporta vision")
+            return ToolResult.fail(
+                f"Backend vision {backend} non supportato; "
+                "usa VISION_BACKEND=ollama, openai o anthropic"
+            )
     except Exception as e:
         return ToolResult.fail(f"Image analysis error: {e}")
 

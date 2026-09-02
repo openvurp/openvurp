@@ -55,7 +55,18 @@ def test_subagent_spawn_announces_result_to_requester():
 
     assert "RESULT:" in result
     assert run.status == SubagentStatus.COMPLETED
-    assert announced
+
+    # Lo stato viene scritto come "completato" PRIMA dell'annuncio: sotto carico
+    # `wait` puo' tornare leggendo lo stato persistito mentre il thread non ha
+    # ancora avvisato il richiedente. Non e' un difetto — un annuncio che
+    # fallisce non deve bloccare il completamento — ma il test non puo' dare per
+    # scontato un ordine che il codice non promette. (Passava da solo e falliva
+    # nella suite intera: la firma di una corsa, non di una regressione.)
+    scadenza = time.time() + 5
+    while not announced and time.time() < scadenza:
+        time.sleep(0.02)
+
+    assert announced, "il richiedente non e' stato avvisato entro 5 secondi"
     assert announced[0][0] == "123"
     assert run.child_session_key.endswith(f":subagent:{run.id}")
 

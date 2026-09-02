@@ -1,7 +1,7 @@
 """
 openvurp Core — Growth Diary
 
-L'agente nasce (BOOTSTRAP), impara e cresce. Questo modulo rende la crescita
+L'agente nasce, impara e cresce. Questo modulo rende la crescita
 visibile e misurabile: atto di nascita, journal degli eventi di crescita,
 report leggibile (/growth).
 

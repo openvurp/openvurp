@@ -17,10 +17,9 @@ from core.personality import (
     prepare_outbound_response,
     slack_reaction_name,
 )
-from channels.telegram import format_telegram_conflict_message
 from core.session import Session
 from core.tools import ToolRegistry
-from main import finalize_channel_response, should_run_bootstrap, read_identity_name
+from main import finalize_channel_response, read_identity_name
 from tools import evolve as evolve_tools
 from tools import media as media_tools
 
@@ -93,15 +92,12 @@ def test_bootstrap_context_marks_missing_workspace_files():
         assert "SOUL.md" in context
 
 
-def test_evolve_tools_follow_real_workspace_file_and_delete_bootstrap():
+def test_evolve_tools_follow_the_real_workspace_file():
     original_get_openvurp_dir = evolve_tools._get_openvurp_dir
 
     with tempfile.TemporaryDirectory() as tmp:
         with open(os.path.join(tmp, "soul.md"), "w", encoding="utf-8") as f:
             f.write("vecchio")
-        with open(os.path.join(tmp, "BOOTSTRAP.md"), "w", encoding="utf-8") as f:
-            f.write("bootstrap")
-
         evolve_tools._get_openvurp_dir = lambda: tmp
         try:
             result = evolve_tools._evolve_handler(
@@ -115,10 +111,6 @@ def test_evolve_tools_follow_real_workspace_file_and_delete_bootstrap():
 
             read_back = evolve_tools._read_self_handler(file="SOUL.md")
             assert read_back == "nuovo contenuto"
-
-            deleted = evolve_tools._delete_bootstrap_handler()
-            assert "[OK]" in deleted
-            assert not os.path.exists(os.path.join(tmp, "BOOTSTRAP.md"))
         finally:
             evolve_tools._get_openvurp_dir = original_get_openvurp_dir
 
@@ -152,24 +144,6 @@ def test_memory_manager_skips_dynamic_memory_outside_private_main_session():
         assert memory.get_relevant("deploy", session_type="group") == "(nessun ricordo ancora)"
 
 
-def test_executor_calls_delete_bootstrap_without_missing_args_error():
-    original_get_openvurp_dir = evolve_tools._get_openvurp_dir
-
-    with tempfile.TemporaryDirectory() as tmp:
-        with open(os.path.join(tmp, "BOOTSTRAP.md"), "w", encoding="utf-8") as f:
-            f.write("bootstrap")
-
-        evolve_tools._get_openvurp_dir = lambda: tmp
-        try:
-            registry = ToolRegistry()
-            registry.register(evolve_tools.DELETE_BOOTSTRAP_TOOL)
-            result = Executor(registry).execute("delete_bootstrap", {})
-            assert result.success
-            assert "BOOTSTRAP.md" in result.output
-        finally:
-            evolve_tools._get_openvurp_dir = original_get_openvurp_dir
-
-
 def test_channel_response_suppresses_explicit_silence_token():
     assert prepare_outbound_response(f"  {SILENCE_TOKEN}  ", source="telegram") == ""
     assert finalize_channel_response(f"\n{SILENCE_TOKEN}\n", "telegram") == ""
@@ -183,17 +157,6 @@ def test_reaction_token_is_parsed_and_preserved_for_supported_channels():
     assert format_callback_response("[[react:👍]]", "telegram") == "[[react:👍]]"
     assert prepare_outbound_response("[[react:👍]]", "telegram") == ""
     assert slack_reaction_name("👍") == "thumbsup"
-
-
-def test_bootstrap_runs_even_with_empty_profile_scaffold_present():
-    with tempfile.TemporaryDirectory() as tmp:
-        os.makedirs(os.path.join(tmp, "memory"), exist_ok=True)
-        with open(os.path.join(tmp, "BOOTSTRAP.md"), "w", encoding="utf-8") as f:
-            f.write("bootstrap")
-        with open(os.path.join(tmp, "memory", "profilo.json"), "w", encoding="utf-8") as f:
-            f.write("{}")
-
-        assert should_run_bootstrap(tmp)
 
 
 def test_read_identity_name_uses_identity_md_without_framework_name():
@@ -220,12 +183,6 @@ def test_read_identity_name_accepts_english_identity_md():
                 return handle.read()
 
         assert read_identity_name(tmp, _load) == "openvurp"
-
-
-def test_telegram_conflict_message_is_human_readable():
-    msg = format_telegram_conflict_message().lower()
-    assert "another instance" in msg
-    assert "--no-telegram" in msg
 
 
 def test_image_analyze_uses_dedicated_vision_model():
@@ -278,19 +235,67 @@ def test_image_analyze_uses_dedicated_vision_model():
     assert captured["json"]["model"] == "qwen3-vl:235b-instruct-cloud"
 
 
+def test_image_analyze_does_not_reuse_codex_chat_backend():
+    """La visione deve funzionare anche quando la chat usa un backend CLI."""
+    import config
+    import requests
+
+    captured = {}
+
+    class DummyResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"message": {"content": "vista"}}
+
+    original = {
+        name: getattr(config, name, None)
+        for name in ("LLM_BACKEND", "LLM_MODEL", "VISION_BACKEND",
+                     "VISION_MODEL", "LLM_BASE_URL")
+    }
+    original_post = requests.post
+
+    with tempfile.TemporaryDirectory() as tmp:
+        image_path = os.path.join(tmp, "photo.jpg")
+        with open(image_path, "wb") as f:
+            f.write(b"fake-image")
+
+        def fake_post(url, json=None, timeout=None):
+            captured["url"] = url
+            captured["json"] = json
+            captured["timeout"] = timeout
+            return DummyResponse()
+
+        config.LLM_BACKEND = "codex"
+        config.LLM_MODEL = "gpt-5.6-luna"
+        config.VISION_BACKEND = "ollama"
+        config.VISION_MODEL = "qwen3-vl:235b-instruct-cloud"
+        config.LLM_BASE_URL = "http://vision.local"
+        requests.post = fake_post
+
+        try:
+            result = media_tools.image_analyze_handler(image_path, prompt="cosa vedi?")
+        finally:
+            requests.post = original_post
+            for name, value in original.items():
+                setattr(config, name, value)
+
+    assert result.success
+    assert captured["url"] == "http://vision.local/api/chat"
+    assert captured["json"]["model"] == "qwen3-vl:235b-instruct-cloud"
+
+
 if __name__ == "__main__":
     test_bootstrap_loader_reads_legacy_lowercase_soul()
     test_workspace_file_resolution_normalizes_legacy_names()
     test_bootstrap_main_loads_daily_memory_but_group_skips_private_memory()
     test_bootstrap_context_marks_missing_workspace_files()
-    test_evolve_tools_follow_real_workspace_file_and_delete_bootstrap()
+    test_evolve_tools_follow_the_real_workspace_file()
     test_memory_manager_can_recall_recent_session_previews()
-    test_executor_calls_delete_bootstrap_without_missing_args_error()
     test_channel_response_suppresses_explicit_silence_token()
     test_reaction_token_is_parsed_and_preserved_for_supported_channels()
-    test_bootstrap_runs_even_with_empty_profile_scaffold_present()
     test_read_identity_name_uses_identity_md_without_framework_name()
     test_read_identity_name_accepts_english_identity_md()
-    test_telegram_conflict_message_is_human_readable()
     test_image_analyze_uses_dedicated_vision_model()
     print("Tutti i test workspace/runtime passati!")

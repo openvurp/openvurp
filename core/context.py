@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import glob as glob_mod
+import json
 from datetime import datetime
 from typing import Optional
 
@@ -29,8 +30,8 @@ SOFT_TRIM_TAIL_CHARS = 1500
 HARD_CLEAR_PLACEHOLDER = "[Tool output rimosso — contesto liberato]"
 
 # Truncation immediata: singolo tool result non puo superare il 30% del contesto
-MAX_TOOL_RESULT_CONTEXT_SHARE = 0.30
-HARD_MAX_TOOL_RESULT_CHARS = 400_000
+MAX_TOOL_RESULT_CONTEXT_SHARE = 0.08
+HARD_MAX_TOOL_RESULT_CHARS = 32_000
 
 # Soglie per le fasi di pruning (rapporto uso/budget)
 SOFT_TRIM_RATIO = 0.30    # oltre 30% del budget: soft trim
@@ -334,10 +335,12 @@ class ContextManager:
             return messages
 
         budget_chars = self.max_tokens * 4  # 1 token ~ 4 chars
-        total_chars = sum(len(m.get("content", "")) for m in messages)
+        total_chars = sum(message_chars(m) for m in messages)
 
-        # Se siamo sotto budget, niente da fare
-        if total_chars <= budget_chars:
+        # Sotto la soglia di soft trim non serve intervenire. Il vecchio
+        # controllo usava l'intero budget e rendeva irraggiungibili le fasi
+        # configurate al 30% e 50%.
+        if total_chars <= budget_chars * SOFT_TRIM_RATIO:
             return messages
 
         # Copia per non mutare l'originale
@@ -347,13 +350,13 @@ class ContextManager:
         # ── FASE 1: Soft Trim ──
         if ratio > SOFT_TRIM_RATIO:
             msgs = self._soft_trim(msgs)
-            total_chars = sum(len(m.get("content", "")) for m in msgs)
+            total_chars = sum(message_chars(m) for m in msgs)
             ratio = total_chars / budget_chars
 
         # ── FASE 2: Hard Clear ──
         if ratio > HARD_CLEAR_RATIO:
             msgs = self._hard_clear(msgs)
-            total_chars = sum(len(m.get("content", "")) for m in msgs)
+            total_chars = sum(message_chars(m) for m in msgs)
             ratio = total_chars / budget_chars
 
         # ── FASE 3: Drop messaggi vecchi ──
@@ -365,6 +368,8 @@ class ContextManager:
     def _is_tool_output(self, msg: dict) -> bool:
         """Identifica messaggi che contengono output di tool/comandi."""
         content = msg.get("content", "")
+        if msg.get("role") == "tool_result":
+            return True
         if msg.get("role") != "user":
             return False
         # I tool output in openvurp iniziano con "Output dei comandi:"
@@ -463,6 +468,52 @@ class ContextManager:
 
         return system + kept
 
+    def prune_to_target(self, messages: list[dict], target_tokens: int) -> list[dict]:
+        """Tetto economico deterministico, distinto dal context window fisico.
+
+        Conserva il system prompt e almeno gli ultimi sei messaggi. Gli output
+        tool vengono ridotti prima di eliminare turni remoti; non richiede una
+        chiamata LLM aggiuntiva per produrre un riassunto.
+        """
+        target_chars = max(4000, int(target_tokens) * 4)
+        if sum(message_chars(m) for m in messages) <= target_chars:
+            return messages
+
+        msgs = self._soft_trim([dict(m) for m in messages])
+        if sum(message_chars(m) for m in msgs) <= target_chars:
+            return msgs
+        msgs = self._hard_clear(msgs)
+        if sum(message_chars(m) for m in msgs) <= target_chars:
+            return msgs
+
+        system = [m for m in msgs if m.get("role") == "system"][:1]
+        others = [m for m in msgs if m.get("role") != "system"]
+        dropped: list[dict] = []
+        while len(others) > 6 and (
+            sum(message_chars(m) for m in system + others) > target_chars
+        ):
+            dropped.append(others.pop(0))
+
+        # Non iniziare mai con un tool_result orfano dopo il taglio.
+        while len(others) > 6 and others and others[0].get("role") == "tool_result":
+            dropped.append(others.pop(0))
+
+        if dropped:
+            user_topics = [
+                " ".join(str(m.get("content", "")).split())[:140]
+                for m in dropped if m.get("role") == "user" and not self._is_tool_output(m)
+            ][-3:]
+            if user_topics:
+                summary = {
+                    "role": "user",
+                    "content": "[Turni precedenti rimossi per budget]\n" + "\n".join(
+                        f"- {topic}" for topic in user_topics
+                    ),
+                }
+                if sum(message_chars(m) for m in system + [summary] + others) <= target_chars:
+                    return system + [summary] + others
+        return system + others
+
     # ── Compaction LLM (livello 4 — chiede al modello di riassumere) ──
 
     def build_compaction_prompt(self, messages: list[dict]) -> list[dict]:
@@ -539,7 +590,17 @@ class ContextManager:
 
     # ── Budget enforcement ──
 
-    def check_budget(self, messages: list[dict]) -> dict:
+    @staticmethod
+    def schema_chars(tools_schema: list[dict] | None = None) -> int:
+        if not tools_schema:
+            return 0
+        try:
+            return len(json.dumps(tools_schema, ensure_ascii=False, separators=(",", ":")))
+        except (TypeError, ValueError):
+            return len(str(tools_schema))
+
+    def check_budget(self, messages: list[dict],
+                     tools_schema: list[dict] | None = None) -> dict:
         """Calcola uso del budget e diagnostica.
 
         Returns dict con:
@@ -552,7 +613,9 @@ class ContextManager:
         - needs_compaction: True se serve compaction LLM
         - top_contributors: i 3 messaggi piu grandi
         """
-        total_chars = sum(message_chars(m) for m in messages)
+        message_total = sum(message_chars(m) for m in messages)
+        tools_chars = self.schema_chars(tools_schema)
+        total_chars = message_total + tools_chars
         total_tokens = total_chars // 4
         budget_chars = self.max_tokens * 4
         ratio = total_chars / budget_chars if budget_chars > 0 else 0
@@ -566,6 +629,8 @@ class ContextManager:
         return {
             "total_tokens": total_tokens,
             "budget_tokens": self.max_tokens,
+            "message_tokens": message_total // 4,
+            "tool_schema_tokens": tools_chars // 4,
             "ratio": round(ratio, 2),
             "over_budget": ratio > 1.0,
             "needs_soft_trim": ratio > SOFT_TRIM_RATIO,
@@ -576,9 +641,13 @@ class ContextManager:
             ]
         }
 
-    def should_compact(self, messages: list[dict]) -> bool:
+    def should_compact(self, messages: list[dict],
+                       tools_schema: list[dict] | None = None) -> bool:
         """Controlla se serve compaction LLM."""
-        total = sum(message_chars(m) for m in messages) // 4
+        total = (
+            sum(message_chars(m) for m in messages)
+            + self.schema_chars(tools_schema)
+        ) // 4
         return total > self.max_tokens * self.compact_threshold
 
     # ── Overflow detection (a livelli) ──

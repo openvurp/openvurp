@@ -5,7 +5,35 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from core.model_router import route_subagent
+from unittest.mock import patch
+
+from core.model_router import route_chat_prompt, route_subagent
+
+
+def test_economic_chat_router_uses_luna_without_an_llm_classifier():
+    with patch("core.cli_backends.codex_login_status", return_value=(True, "ChatGPT")):
+        choice = route_chat_prompt("ciao, come stai?")
+    assert (choice.backend, choice.model, choice.tier) == (
+        "codex", "gpt-5.6-luna", "fast",
+    )
+
+
+def test_economic_chat_router_reserves_terra_for_complex_work():
+    with patch("core.cli_backends.codex_login_status", return_value=(True, "ChatGPT")):
+        choice = route_chat_prompt(
+            "Analizza il progetto e proponi una migrazione completa dell'architettura"
+        )
+    assert (choice.backend, choice.model, choice.tier) == (
+        "codex", "gpt-5.6-terra", "deep",
+    )
+
+
+def test_economic_chat_router_falls_back_to_claude_subscription():
+    with patch("core.cli_backends.codex_login_status", return_value=(False, "no")), \
+            patch("core.cli_backends.claude_login_status", return_value=(True, "Claude.ai")):
+        choice = route_chat_prompt("scrivi una risposta")
+    assert choice.backend == "claude_cli"
+    assert choice.model == "sonnet"
 
 
 def test_explicit_route_is_preserved():
