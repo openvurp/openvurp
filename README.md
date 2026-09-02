@@ -118,7 +118,7 @@ service. Close the terminal, reboot: the agents are still there.
 Each agent runs on whichever you pick.
 
 - **Local models** — Ollama, or anything speaking the OpenAI API (LM Studio,
-  llama.cpp, vLLM, Jan, koboldcpp). openvurp checks the usual local ports for
+  llama.cpp, vLLM, Jan, koboldcpp,Colibri). openvurp checks the usual local ports for
   you: what answers shows up in Settings, models already listed.
 - **Subscription CLIs** — `codex login` or `claude` run on the plan you already
   pay for. openvurp removes `OPENAI_API_KEY` from their environment so they can
