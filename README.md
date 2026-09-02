@@ -5,7 +5,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"/></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-3776ab" alt="Python 3.10+"/>
-  <img src="https://img.shields.io/badge/tests-578%20passing-2ea043" alt="578 tests"/>
+  <img src="https://img.shields.io/badge/tests-579%20passing-2ea043" alt="579 tests"/>
   <img src="https://img.shields.io/badge/runs-fully%20offline-e8654a" alt="runs fully offline"/>
   <img src="https://img.shields.io/badge/data-stays%20on%20your%20machine-6e7681" alt="local data"/>
 </p>
@@ -292,7 +292,7 @@ memory/          everything the agents lived: chats, lessons, diary, dreams
 ## Development
 
 ```bash
-python3 -m pytest -q               # 578 tests
+python3 -m pytest -q               # 579 tests
 python3 scripts/secret_scan.py     # before any push
 ```
 
