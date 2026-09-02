@@ -9,7 +9,6 @@ This file is a cheat sheet for the openvurp workspace. It does not grant tool ac
 - Example env: `.env.example`
 - Heartbeat config: `heartbeat.json`
 - Environment snapshot: `memory/environment.json`
-- Reset baseline: `.reset_baseline/`
 
 ## Memory And State
 
@@ -47,7 +46,6 @@ This file is a cheat sheet for the openvurp workspace. It does not grant tool ac
 - Use shell for tests, package managers, git, and real system commands.
 - Use the browser tools for pages and visual/browser verification.
 - Use `agent_state`, task journal, and open loops for durable work.
-- When code changes touch reset-tracked files, update the reset baseline after tests.
 
 ## Rule
 

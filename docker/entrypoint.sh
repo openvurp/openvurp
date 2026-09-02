@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
-# Entrypoint del container openvurp.
-#   headless  → server (dashboard chat + gateway + telegram + heartbeat), default
-#   tui       → TUI interattiva (usa: docker compose exec openvurp openvurp)
-#   shell     → shell di servizio
-#   <altro>   → eseguito così com'è
+# openvurp container entrypoint.
+#   headless  -> the wallet + gateway + inbound channels + heartbeat (default)
+#   tui       -> the interactive terminal (docker compose exec openvurp openvurp)
+#   shell     -> a service shell
+#   <other>   -> run as given
 set -e
 cd /app
 

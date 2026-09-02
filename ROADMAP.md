@@ -9,7 +9,7 @@ roadmap with open items is an invitation, not a weakness.
 - done: env-based secrets
 - done: `.env.example`
 - done: secret scanner (`scripts/secret_scan.py`)
-- done: README, SECURITY, CONTRIBUTING
+- done: README, SECURITY
 - done: reproducible install and test commands
 - done: code integrity baseline + verify (`/integrity`)
 
@@ -92,3 +92,14 @@ roadmap with open items is an invitation, not a weakness.
 - task-aware routing
 - cost, latency, and quality tracking
 - judge mode for critical outputs
+
+## 10. Release
+
+The repository is private today, so continuous integration is deliberately
+minimal: tests on push, nothing else. It is not worth building a pipeline for
+an audience of one.
+
+- when it goes public: full CI — the suite across every supported Python, the
+  secret scanner, and **built executables that start the whole thing**, so
+  running openvurp does not require a Python toolchain
+- done: declared Python floor is checked against the sources, not assumed

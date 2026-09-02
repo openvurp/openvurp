@@ -28,6 +28,9 @@ classifiers = [
 
 dependencies = [
     "requests>=2.28",
+    # The search tool goes through this: it handles the token dance the
+    # engines require, and rotates between them when one refuses.
+    "ddgs>=9.0",
     "httpx>=0.24",
     "beautifulsoup4>=4.12",
     "rich>=13.0",

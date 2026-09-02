@@ -1,36 +1,41 @@
-# openvurp — avvio immediato.
-#   docker compose up -d                  → server headless + dashboard chat su :8420
-#   docker compose exec openvurp openvurp → apre la TUI nel container (più terminali ok)
-#   docker compose exec openvurp sh       → shell di servizio
+# openvurp — one command and the wallet is up.
+#   docker compose up -d                  -> the wallet on http://localhost:8420
+#   docker compose exec openvurp openvurp -> the terminal inside the container
+#   docker compose exec openvurp sh       -> a service shell
 services:
   openvurp:
     build: .
     image: openvurp:latest
     container_name: openvurp
     ports:
-      - "8420:8420"   # dashboard web (chat)
+      - "8420:8420"   # the wallet
       - "8421:8421"   # runtime gateway
     environment:
       LLM_BACKEND: ${LLM_BACKEND:-ollama}
       LLM_MODEL: ${LLM_MODEL:-qwen3-coder-next:cloud}
-      # Ollama gira sull'host: raggiungibile via host.docker.internal
+      # Ollama runs on the host: reachable through host.docker.internal
       LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
       DASHBOARD_ENABLED: "true"
-      DASHBOARD_HOST: "0.0.0.0"            # raggiungibile dall'host
-      DASHBOARD_TOKEN: ${DASHBOARD_TOKEN:-}  # se vuoto, generato e stampato nei log
+      DASHBOARD_HOST: "0.0.0.0"            # reachable from the host
+      DASHBOARD_TOKEN: ${DASHBOARD_TOKEN:-}  # empty: generated and printed in the logs
       GATEWAY_ENABLED: "true"
       GATEWAY_HOST: "0.0.0.0"
-      # Chiavi/canali opzionali: prese dall'ambiente o da un .env accanto al compose
+      # Optional keys and channels: from the environment, or a .env beside this file
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:-}
       TELEGRAM_ALLOWED_USERS: ${TELEGRAM_ALLOWED_USERS:-}
+      DISCORD_TOKEN: ${DISCORD_TOKEN:-}
+      DISCORD_ALLOWED_USERS: ${DISCORD_ALLOWED_USERS:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+      SLACK_ALLOWED_USERS: ${SLACK_ALLOWED_USERS:-}
     extra_hosts:
-      - "host.docker.internal:host-gateway"   # accesso a Ollama sull'host (Linux)
+      - "host.docker.internal:host-gateway"   # reach Ollama on the host (Linux)
     volumes:
-      - openvurp-memory:/app/memory           # persistenza: memoria, sessioni, identità
-    stdin_open: true   # necessari per `exec ... openvurp` (TUI interattiva)
+      - openvurp-memory:/app/memory           # everything the agents lived: chats, memory, identity
+    stdin_open: true   # both needed by `exec ... openvurp` (the interactive terminal)
     tty: true
     restart: unless-stopped
 

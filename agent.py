@@ -225,15 +225,21 @@ class UI:
 
     # ── Prompt ──
 
+    # Il tratto orizzontale del box, come costante e non scritto dentro le
+    # f-string. Non e' estetica: una backslash nella PARTE ESPRESSIONE di una
+    # f-string e' sintassi valida solo dal 3.12, e il progetto dichiara 3.10.
+    # Su 3.10 e 3.11 non falliva un test — il file non si leggeva proprio.
+    _RIGA = "\u2500"
+
     def _bar(self, text: str = ""):
         cols = shutil.get_terminal_size((80, 24)).columns
         c = "\033[38;5;240m"
         r = "\033[0m"
         if text:
             pad = max(cols - len(text) - 4, 2)
-            sys.stdout.write(f"{c}\u2500\u2500{text}{'\u2500' * pad}{r}\n")
+            sys.stdout.write(f"{c}{self._RIGA * 2}{text}{self._RIGA * pad}{r}\n")
         else:
-            sys.stdout.write(f"{c}{'\u2500' * cols}{r}\n")
+            sys.stdout.write(f"{c}{self._RIGA * cols}{r}\n")
         sys.stdout.flush()
 
     def _status_visible(self, context_pct: int) -> str:
@@ -260,8 +266,8 @@ class UI:
         # input, bordo di chiusura dopo l'invio. Status nel bordo alto (niente
         # bottom_toolbar: ancorava la barra in basso riservando righe vuote).
         # Il menu `/` compare solo quando digiti.
-        top = f"{c}\u256d\u2500{status}{'\u2500' * pad}\u256e{r}"
-        bottom = f"{c}\u2570{'\u2500' * max(cols - 2, 2)}\u256f{r}"
+        top = f"{c}\u256d{self._RIGA}{status}{self._RIGA * pad}\u256e{r}"
+        bottom = f"{c}\u2570{self._RIGA * max(cols - 2, 2)}\u256f{r}"
 
         sys.stdout.write("\n" + top + "\n")
         sys.stdout.flush()
@@ -286,7 +292,7 @@ class UI:
         r = "\033[0m"
         status = self._status_visible(context_pct)
         pad = max(cols - len(status) - 4, 2)
-        sys.stdout.write(f"\n{c}\u256d\u2500{status}{'\u2500' * pad}\u256e{r}\n")
+        sys.stdout.write(f"\n{c}\u256d{self._RIGA}{status}{self._RIGA * pad}\u256e{r}\n")
         sys.stdout.flush()
         self._at_prompt = True
         try:
@@ -295,7 +301,7 @@ class UI:
             result = "/exit"
         finally:
             self._at_prompt = False
-        sys.stdout.write(f"{c}\u2570{'\u2500' * max(cols - 2, 2)}\u256f{r}\n")
+        sys.stdout.write(f"{c}\u2570{self._RIGA * max(cols - 2, 2)}\u256f{r}\n")
         sys.stdout.flush()
         self.flush_notes()
         return result

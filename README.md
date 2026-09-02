@@ -3,16 +3,26 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-e8654a" alt="MIT license"/></a>
-  <img src="https://img.shields.io/badge/python-3.10+-e8654a" alt="Python 3.10+"/>
-  <img src="https://img.shields.io/badge/local--first-ollama-e8654a" alt="local-first"/>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"/></a>
+  <img src="https://img.shields.io/badge/python-3.10%2B-3776ab" alt="Python 3.10+"/>
+  <img src="https://img.shields.io/badge/tests-578%20passing-2ea043" alt="578 tests"/>
+  <img src="https://img.shields.io/badge/runs-fully%20offline-e8654a" alt="runs fully offline"/>
+  <img src="https://img.shields.io/badge/data-stays%20on%20your%20machine-6e7681" alt="local data"/>
 </p>
 
-**A wallet of personal AI agents that know each other, ask each other, and actually do the work.**
+# openvurp
 
-You make the agents. Each one gets a name, a job and a character — *amanda hunts Amazon deals*, *ciccio watches the bills*, *dev writes code*. They are not personas in a prompt: they have real tools (shell, files, the web, the browser), and from the moment a second one exists **they know about each other**. When a question lands outside its field, an agent asks the colleague whose field it is — on its own, without you remembering who does what.
+openvurp is a self-hosted runtime for **personal AI agents that do real work on
+your machine** — run shell commands, read and write files, search and fetch the
+web, drive a browser, watch folders — and that **know about each other** well
+enough to hand a question to the right colleague without you routing it.
 
-`openvurp` opens the wallet in your browser. One conversation per agent, a room where they all talk, and — because they run real commands — you watch what they do while they do it.
+It runs on your own hardware, with a local model (Ollama, LM Studio, llama.cpp,
+anything speaking the OpenAI API) or a cloud one, chosen per agent. The
+conversations, the memory and the identities live in `memory/` on your disk and
+go nowhere you did not configure.
+
+Typing `openvurp` opens a page in your browser. That page is the product.
 
 ```
 you   → my SSD is dying, what should I get?
@@ -26,272 +36,276 @@ amanda → Crucial P3 Plus 1TB, €74, shipped by Amazon.
 dev   → So: Crucial P3 Plus, €74. Back up before you swap it.
 ```
 
-Every agent still carries the whole openvurp runtime underneath: a verified identity, memory that survives restarts, pacts the runtime enforces, an audit trail of every action.
-
-## Why openvurp?
-
-*"Vurp"* means **octopus** in the Taranto dialect.
-
-I chose this name as a tribute to my hometown, Taranto, and its strong connection to the sea. It's a small way of bringing a piece of my roots and local culture into this project.
+Nothing there was scripted. `dev` ran a real command against a real disk,
+decided on its own that the purchase was not its field, and found `amanda`
+because every agent carries the roster — names and trades — inside its own tools.
 
 ---
 
-## What makes openvurp different
-
-| | Typical agent frameworks | openvurp |
-|---|---|---|
-| **Shape** | One assistant, one chat | **A wallet**: agents you create, one conversation each, and a room where they all talk — the roster starts empty on purpose |
-| **Teamwork** | You route the question yourself | Every agent sees the roster *inside its own tools* and asks the right colleague on its own — `ask_everyone` puts a question to the whole room, and whoever it doesn't concern stays quiet |
-| **Watching them work** | A spinner, then a wall of text | Streaming, the commands they run as they run them, two agents visibly walking over to consult each other, and a permission prompt where *you* asked for the action |
-| **Identity** | A markdown file you write by hand | **Anima**: structured traits with origin, age, version, and full history — evolved through verified mutations, never copy-pasted |
-| **Learning** | Notes accumulate in a folder | **Verified growth**: candidates need evidence and confidence to be promoted, carry provenance, and can be rolled back |
-| **Progress** | You hope it's getting better | **The Mirror**: every correction you give becomes a test case, replayed nightly — `/growth` shows *"7/9 corrections no longer repeated"* |
-| **Off-hours** | Idle until you type | **Autonomous heartbeat**: advances open loops, checks stuck work, studies its own curiosity questions — and messages you only when it matters |
-| **Memory** | A context window | Files + semantic memory (vector + FTS5) + nightly **dreaming** that consolidates days into durable facts and non-obvious insights |
-| **Trust** | Prompt instructions | **Pacts**: agreements enforced by the runtime (*"never touch that folder"* blocks the tool call itself), plus a **privacy router** that keeps private sessions on local models |
-| **Capabilities** | A fixed toolset | **The Forge**: when a task exceeds its tools the agent builds a new one — scaffold, test, then promote to a reusable plugin, with the lifecycle enforced by the runtime |
-| **Awareness** | Idle until you type | **Senses**: it watches folders, files, web pages and RSS feeds between heartbeats; a change becomes an observation linked to a project or a curiosity |
-| **Scale** | One model does everything | **Per-agent engines**: give each one the model that fits — a subscription CLI for the hard ones, a local model for the cheap ones — and they still talk to each other |
-| **Group work** | A single prompt pretending to be a team | **A real room**: they argue for as long as they have something to say, stop when nobody adds anything, and whoever opened it closes it — saying what was agreed, what wasn't, and who thinks otherwise |
-| **Outages** | Crashes silently, you notice hours later | **Sentinel**: notices when internet or Ollama go down *and when they come back* — tells you, and resumes suspended work on recovery |
-| **Mistakes** | Restart and lose everything | **It remembers being wrong**: corrections are recorded, promoted to lessons with provenance, and rolled back when they stop holding |
-
-## The wallet
-
-**The roster starts empty.** No sample agents, no "openvurp" sitting in the list
-pretending to be one of them — it is the host, not a contact. You create the
-first agent yourself: a name, a job, a character. *That is the point.*
-
-**A job is not a label.** It is how the others learn that something is your
-agent's business. Write *"hunts Amazon deals"* and the moment a colleague is
-asked about a purchase, it goes to that one — because the roster travels inside
-every agent's tools, with everyone's trade written next to their name. You never
-have to remember who does what.
-
-**They can ask the whole room.** When nobody obviously owns a question,
-`ask_everyone` puts it to everyone at once and the ones it doesn't concern stay
-silent — so you get the two answers that matter, not five apologies.
-
-**"All together" is a room, not a broadcast.** They read each other, disagree by
-name, and keep going while there is something to add. It ends when a whole round
-passes with nobody speaking, or when you stop it — and whoever opened it closes
-it: what you agreed on, what you didn't, who thinks otherwise, and what would
-settle it. Never a consensus nobody reached.
-
-**Talk to them.** A microphone in the composer, or a full voice mode: the agent
-in front of you, speaking as soon as the first sentence is ready — each with its
-own voice, so you hear when a different one answers.
-
-## The life cycle
-
-**Birth** — An agent starts unnamed and empty. You give it a name, a role and an engine when you create it; everything else it learns from you, on the job. There is no ceremony and no seeded persona. Everything below is true of every agent in the wallet — they all run the same runtime.
-
-**Day** — It works with you: native tool calling (shell, files, web, browser, processes, media, voice), token-by-token streaming, three approval modes (`/mode safe|auto|plan`), approvals it actually *remembers* (`always` → 8h lease), and pacts it cannot break. An **agent kernel** turns "be agentic" from a prompt wish into runtime policy — it plans, delegates to **subagents**, and blocks final answers that arrive before the work is observed and verified. When its tools fall short, the **Forge** lets it build new ones.
-
-**Night** — The heartbeat runs its cycle: consolidates daily notes into long-term memory, **dreams** (an LLM pass over the week looking for non-obvious patterns — insights become lesson candidates and proposed identity traits), writes a first-person **diary** entry, and runs the **mirror** against your past corrections.
-
-**Growth** — `/growth` shows it all: age since birth, lessons promoted (verified, with provenance), corrections no longer repeated, dreams, diary entries, semantic memories. Not a feeling — numbers.
-
-**End** — An agent you no longer want goes from the roster in two clicks. Its conversation is archived, not destroyed: what it did stays readable, it simply stops being one of yours.
-
-## Quick start
+## Install and run
 
 ```bash
 git clone https://github.com/openvurp/openvurp && cd openvurp
 python3 -m pip install -e ".[dev]"
-openvurp                      # first run: guided setup → the agent is born
+openvurp
 ```
 
-First launch runs a **guided setup wizard** — pick backend, model and (optionally) a Telegram token for phone notifications; it writes `.env` for you. The setup is a requirement, not a suggestion: openvurp won't boot a half-configured agent.
+The first launch runs a **setup wizard**: engine, model, and optionally a
+Telegram token. It writes `.env` for you and refuses to boot half-configured —
+an agent with no model is a page that does nothing.
 
-Once configured, **`openvurp` opens the web wallet** — that is the interface. It starts empty on purpose: an agent appears when you create one, not before. The roster on the left, one conversation per agent, the room where they all talk, live tool activity, and permission requests answered where you actually are. Settings live on their own page (gear, bottom left): subscriptions, engine, channels.
+Then `openvurp` opens the wallet at **http://localhost:8420**.
 
-Prefer the terminal? `openvurp --cli` gives you the Claude-Code-style CLI (`⏺` tool calls, streaming, slash-command menu on `/`). `--no-browser` skips opening the page, `--headless` runs services only. Re-run setup anytime with `openvurp --setup`; `openvurp --doctor` checks the runtime. The agent **replies in whatever language you write in**.
-
-### Docker
-
-```bash
-docker compose up -d                 # starts immediately: headless server + dashboard chat on :8420
-docker compose exec openvurp openvurp    # open the CLI inside the container (run it many times for several terminals)
-docker compose exec openvurp sh          # a service shell
-```
-
-The container runs **headless** (dashboard web chat + gateway + heartbeat) and connects to Ollama on the host via `host.docker.internal`. Multiple agents run in parallel inside it (`subagent_spawn` — they run tools/tests, not just text); `memory/` is a named volume so identity and history persist across restarts. Configure via env vars in `docker-compose.yml` (or a `.env` next to it).
-
-### Always on
-
-```bash
-sudo bash scripts/install-service.sh   # systemd service: survives closed terminals and reboots
-journalctl -u openvurp -f              # follow the logs
-```
-
-The service runs openvurp headless (`Restart=always`): close every terminal, reboot the machine — the agent keeps living, reachable from the web dashboard. The **sentinel** watches internet and the LLM backend from inside: if something falls it tells you, and when it comes back it wakes the agent to resume what was suspended.
-
-Backends: **Automatic (cheapest)**, **Ollama**, **Codex with a ChatGPT login**, **Claude Code with a Claude.ai login**, **Anthropic API**, **OpenAI API**, **Groq**, or any OpenAI-compatible server. Set `LLM_BACKEND` and `LLM_MODEL` in `.env`, or choose backend and model independently for every web chat. The automatic router is local and free: it does not call an LLM to classify the prompt, normally selects Codex Luna, and reserves Terra for clearly complex work. It never selects Ollama or a separately billed API implicitly. The CLI subscription backends deliberately remove API keys from their child process, so they consume the included subscription allowance instead of silently switching to API billing. The runtime supports native tool calling on API backends, compact CLI-agent prompts, adaptive tool temperature, real token accounting, parallel read-only tool execution, and **MCP** servers for remote tools — out of the box.
-
-## Daily use
-
-| Command | What it does |
+| command | what it does |
 |---|---|
-| `/mode safe\|auto\|plan` | Approval posture: normal · pre-approve non-critical · observe-and-plan only |
-| `/anima` | Who the agent has become: traits with origin, age, version |
-| `/growth [days]` | The growth report — birth date, lessons, mirror score, dreams |
-| `/diary [n]` | Its diary, in its own voice |
-| `/mirror` (`/specchio`) | Mirror status: which corrections it no longer repeats |
-| `/pacts` (`/patti`) | Active pacts and their history |
-| `/curiosity` (`/curiosita`) | Open questions it wants to study |
-| `/projects` (`/progetti`) | Long-term goals and their next concrete step |
-| `/forge` (`/fucina`) | The Forge: tools the agent built for itself, and their lifecycle |
-| `/senses` (`/sensi`) | What the agent is watching (folders, files, web, RSS) |
-| `/bond` (`/fili`) | The bond: the human side of its initiative over time |
-| `/integrity [refresh]` | Verify code integrity against the baseline (or refresh it) |
-| `/voice \| /audio \| /mic` | Toggle voice replies, audio/transcription, or speak an input |
-| `/update` `/restart` | Self-update from git (safe fast-forward + smoke-test + rollback) and restart **in place** — the terminal/TUI stays open |
-| `/dashboard` | Start the local web dashboard — persistent multi-chat, live activity, isolated histories and optional multiplayer rooms with configurable peer agents (also `DASHBOARD_ENABLED=true`) |
-| `/memory` `/skills` `/doctor` `/trace` `/self` `/evolve` | Memory files, skills, runtime health, session trace, agent panel, self-evolution |
+| `openvurp` | the wallet in the browser (the normal way) |
+| `openvurp --cli` | the terminal interface instead |
+| `openvurp --headless` | services only: no browser, no terminal UI |
+| `openvurp --setup` | run the wizard again |
+| `openvurp --doctor` | check the runtime and report what is broken |
 
-When an action needs approval you get three answers: `s` (yes), `n` (no), `always` — *yes, and remember it for 8 hours*. Critical commands stay blocked in every mode.
+### With Docker
 
-The commands above belong to the terminal (`openvurp --cli`). The wallet is the
-web page, and it is where the day happens.
+```bash
+docker compose up -d                       # wallet on http://localhost:8420
+docker compose exec openvurp openvurp      # the terminal, inside the container
+```
 
-### The room
+The image starts headless: wallet, gateway, inbound channels, heartbeat. It
+reaches Ollama on the host through `host.docker.internal`, and `memory/` is a
+named volume, so restarting the container does not cost you the agents' history.
+WhatsApp is the one channel not in the image — its bridge needs Node.
 
-Conversations live in `memory/chats/chats.db` and survive restarts. Each agent
-has its own; **All together** is the shared room.
+### As a service
 
-A discussion runs for as long as it is worth running. Everyone reads what was
-said before them; a round in which nobody speaks ends it, and so does the
-**Stop** button — which never cuts anyone off mid-sentence, it simply stops
-handing out the floor. Then whoever opened it writes the landing: what you
-agreed on, what you didn't and who thinks otherwise, and what would settle it.
-Inventing a consensus is forbidden, and saying *"we didn't decide"* is a valid
-ending.
+```bash
+sudo bash scripts/install-service.sh   # systemd, Restart=always
+journalctl -u openvurp -f
+```
 
-Silence is a legal answer everywhere — an agent with nothing to add writes
-nothing, and repeating yourself counts as silence, not as a turn.
+Close every terminal, reboot the machine: the agents keep running and the page
+is still there. A **sentinel** watches the network and the model backend from
+inside — when something falls it tells you, and when it comes back it wakes the
+work that was suspended.
 
-Bounded on purpose by `MULTIPLAYER_MAX_AGENTS`, `MULTIPLAYER_MAX_ROUNDS` and
-`MULTIPLAYER_DAILY_CALL_BUDGET`. When a limit is reached the room says so —
-**openvurp never answers in an agent's place.**
+---
 
-### Watching them work
+## What the page contains
 
-Streaming token by token; the shell commands and searches as they happen; two
-avatars visibly walking over to each other when one consults the other, then
-walking back. A file an agent produces — a PDF, a page, an image — opens in a
-card next to the chat, with an Preview/Code switch for pages. Permission
-requests appear **where you asked for the action**, not in a terminal you are
-not looking at. **What your agents did** lists every command, search and file
-touched, straight from the audit log.
+**A roster, on the left.** It starts empty. There are no sample agents and no
+personas shipped with the product: you create the first one yourself, giving it
+a name, a job and an engine. The job matters more than it looks — write *"hunts
+Amazon deals"* and that sentence is what the other agents read when they are
+deciding who to ask.
 
-### Engines, and your own local AI
+**One conversation per agent**, kept in `memory/chats/chats.db` and still there
+after a restart.
 
-Every agent can run on a different engine. Anything that speaks the OpenAI API
-works — LM Studio, llama.cpp, vLLM, Jan, koboldcpp, GPT4All — and openvurp
-knocks on the usual local ports for you: whatever answers shows up in Settings
-as a choice, with its models already in the menu. Ollama has its own row.
-Subscription CLIs (`codex login`, `claude`) run on the plan you already pay
-for; openvurp actively strips `OPENAI_API_KEY` from their environment so they
-can never silently fall back to metered billing.
+**A room called "All together"**, where they answer each other instead of in
+parallel. See [The room](#the-room).
 
-For subscription-backed local CLI use, authenticate once (`codex login` with ChatGPT and/or launch `claude` with Claude.ai). Codex responses use App Server text-delta events, so terminal and dashboard render the answer while it is being generated instead of receiving one completed block. The same App Server connection exposes the request-relevant **openvurp tools** to Codex as dynamic tools: searches, browser, files, processes, memory and plugins are executed by openvurp, so its approvals, pacts, audit and UI remain in control. The conservative defaults are `CODEX_MODEL=gpt-5.6-luna`, `CODEX_SANDBOX=read-only`, compact 12k-character openvurp context, at most 8k characters returned per tool, and one outer openvurp iteration per CLI turn. `AUTO_ROUTER_MAX_TIER=terra` prevents automatic use of Sol; set it to `luna` to force the cheapest tier for every automatic turn. API providers remain separate and are shown as unavailable until their package and key are configured.
+**What they are doing, while they do it.** Tokens as they stream, every shell
+command and search at the moment it runs, and two avatars that visibly walk
+across to each other when one consults the other. A file an agent produces — a
+PDF, a page, an image — opens in a card beside the chat instead of landing in
+your downloads folder.
 
-### Token budget
+**Permission requests where you asked for the action.** If you started something
+from the browser, the question appears in the browser. Nothing waits for an
+answer in a terminal you are not looking at, and no answer means no.
 
-The runtime no longer sends every tool schema on every LLM call. It exposes a small core toolset, selects relevant packs per request, and can load another pack on demand. Conversation history excludes old tool output, pruning accounts for schema size, and each turn has a cumulative token ceiling. CLI-agent prompts and oversized dynamic-tool results are compacted separately; automatic routing adds zero classification tokens. The main controls are `CHAT_MAX_ITERATIONS`, `TURN_TOKEN_BUDGET`, `CONTEXT_MAX_TOKENS`, `SESSION_HISTORY_MAX_*`, `CODEX_CONTEXT_MAX_CHARS`, `CODEX_TOOL_RESULT_MAX_CHARS`, and `DAILY_LLM_BUDGET`.
+**Voice.** A microphone in the composer, or a full conversation mode where the
+agent speaks as soon as its first sentence is ready — each with a different
+voice, so you hear when a different one takes over.
 
-### Channels
+**Settings on their own page** (the gear, bottom left): engine, subscriptions,
+channels, local servers. The choices are menus built from what is actually
+installed and reachable, not fields where you type a model name from memory.
 
-**One conversation, many doors.** Telegram, Discord, Slack and WhatsApp adapters
-do not implement their own idea of a conversation: they translate an incoming
-message into a call to the *same* function the web page uses, and send back
-whatever comes out. When the room learns to close itself, or agents learn to
-consult each other, every channel already knows — there is nothing to port.
+---
 
-That constraint is enforced by a test: no file under `channels/` may touch the
-roster, the rooms or the swarm on its own.
+## What an agent actually is
 
-Since a chat has no sidebar to click, there is a small shared grammar:
+Not a system prompt with a name on it. Each one runs the whole runtime:
+
+**Tools.** Shell, files, web search and fetch, a real browser, processes, media
+(PDF, images, audio), notifications. Called natively where the backend supports
+it; the read-only ones run in parallel.
+
+**Approvals.** Three postures — `safe` asks, `auto` pre-approves the
+non-critical, `plan` only observes and proposes. Saying *always* creates a lease
+scoped to that tool and command prefix, for eight hours, revocable. Destructive
+shell commands (`rm -rf /`, `dd`, `mkfs`, fork bombs) are refused in every
+posture, `auto` included.
+
+**Memory.** Files on disk, plus semantic memory (vectors and FTS5). At night the
+heartbeat consolidates the day's notes into durable facts, writes a diary entry
+in the first person, and runs a **dreaming** pass over the week looking for
+patterns worth keeping.
+
+**Identity.** Markdown files (`SOUL.md`, `IDENTITY.md`, `USER.md`) are the seed,
+reloaded from disk every turn — editing one is live on the next message. Once
+the **anima** holds real traits, each with an origin, an age, a version and its
+own history, it replaces those files in context.
+
+**Learning you can check.** A correction you give becomes a test case, replayed
+later. `/growth` reports the numbers: lessons promoted with their evidence,
+corrections no longer repeated, what was rolled back when it stopped holding.
+
+**Pacts.** Rules you negotiate once (*never touch that folder*) and the runtime
+enforces on every tool call, above every posture.
+
+**The Forge.** When the task exceeds the toolbox, the agent scaffolds a new
+tool, tests it, and only then promotes it to a reusable plugin.
+
+**Subagents.** Real parallel work, not parallel text: they run tools and tests
+and report back.
+
+---
+
+## The room
+
+Writing in **All together** starts a discussion, not a broadcast. Everyone reads
+what was said before them and answers it by name.
+
+It ends by itself when a whole round passes with nobody adding anything —
+repeating yourself counts as silence, not as a turn. Or you press **Stop**,
+which never cuts a sentence in half; it stops handing out the floor.
+
+Then whoever opened the discussion writes the landing: what was agreed, what was
+not, who thinks otherwise, and what would settle it. Announcing a consensus
+nobody reached is forbidden, and *"we did not decide"* is a valid ending.
+
+Bounded by `MULTIPLAYER_MAX_AGENTS`, `MULTIPLAYER_MAX_ROUNDS` and
+`MULTIPLAYER_DAILY_CALL_BUDGET`. When a limit is hit the room says so — openvurp
+never answers in an agent's place, least of all when your budget ran out.
+
+---
+
+## Channels
+
+Telegram, Discord, Slack and WhatsApp reach the same agents from your phone. The
+adapters carry no logic of their own: they translate an incoming message into a
+call to **the same function the web page calls**, and send back what comes out.
+A test fails if any file under `channels/` reaches for the roster, the rooms or
+the swarm by itself.
+
+A chat has no sidebar, so there is a small shared grammar:
 
 ```
-@amanda find me an SSD     talk to one agent
-/agenti                    who is in the roster
-/tutti what do you think?  ask the whole room
+@amanda find me an SSD     ask one agent
+amanda                     a bare name: from now on you are talking to her
+/agents                    who is in the roster
+/all what do you think?    put it to the whole room
 /stop                      stop the discussion
-/aiuto                     this list
+/me                        back to talking to openvurp itself
+/help                      this list
 ```
 
-Enable them with `CHANNELS_IN=telegram,discord` in `.env`. **Each channel needs
-its own allow-list** (`TELEGRAM_ALLOWED_USERS`, `DISCORD_ALLOWED_USERS`, …): an
-empty list means nobody, and the channel refuses to start. Opening a door onto
-your own terminal cannot be the default. Strangers get silence, not a refusal —
-they are not even told the bot exists.
+Turn them on with `CHANNELS_IN=telegram,discord`. **Every channel needs its own
+allow-list** (`TELEGRAM_ALLOWED_USERS`, `DISCORD_ALLOWED_USERS`, …): an empty one
+means nobody, and the channel refuses to start rather than open your machine to
+the world. Strangers get silence, not a refusal — they are not told the bot
+exists.
 
-**Telegram** needs no extra dependency (its API is plain HTTP). **Discord**
-needs `pip install 'openvurp[discord]'` and the *message content* intent.
-**Slack** needs `openvurp[slack]`, a bot token (`xoxb-`) and an app token
-(`xapp-`) — it uses Socket Mode, so no public address is required.
+Telegram needs no extra package. Discord needs `openvurp[discord]` and the
+message-content intent. Slack needs `openvurp[slack]` with a bot token and an
+app token, over Socket Mode, so no public address is required.
 
 **WhatsApp** goes through **Baileys**, which speaks the WhatsApp Web protocol:
-you pair it by scanning a QR from the Settings page, and it runs from behind
-your router like the others. It needs Node.js (the bridge fetches Baileys on
-first start) — and one honest warning, repeated where you switch it on:
-**Baileys is unofficial, Meta detects unofficial clients and can ban the
-number.** Use a spare number, never your personal one. The bridge itself is
-transport only: a test fails if any file under `channels/` reaches for the
-roster, the rooms or the swarm on its own.
+you pair it by scanning a QR code from the Settings page. It needs Node.js, and
+comes with one honest warning, repeated where you switch it on — **Baileys is
+unofficial, Meta detects unofficial clients and can ban the number.** Use a
+spare number.
 
-### Telegram notifications (outbound)
+Separately from all of this, and useful even with every channel off: set
+`TELEGRAM_TOKEN` and `TELEGRAM_CHAT_ID` and openvurp writes *to* you — the
+morning brief, "I'm done", a permission waiting for an answer.
 
-Separate from the above, and useful even with every channel off: openvurp
-writes *to* you when you are away from the computer — the morning brief, "I'm
-done", a permission waiting for an answer. Set `TELEGRAM_TOKEN` and
-`TELEGRAM_CHAT_ID`. To find your chat id, send any message to your bot and open
-`https://api.telegram.org/bot<token>/getUpdates`.
+---
 
-## Security model
+## Engines
 
-Layered, and enforced by the runtime — not by prompt etiquette:
+Every agent can run on a different one, chosen per conversation.
 
-- **Sandbox**: file tools are confined to the workspace (`SANDBOX_MODE=restricted`); absolute/`..` paths outside it are blocked unless added to `SANDBOX_ALLOWED_PATHS`. Critical shell commands (`rm -rf /`, `dd`, `mkfs`, fork bombs…) are hard-blocked in every mode.
-- **Dashboard**: binds to `127.0.0.1` by default (not reachable from the LAN). Exposing it (`DASHBOARD_HOST=0.0.0.0`, Docker) requires a `DASHBOARD_TOKEN` — auto-generated and enforced if you don't set one, so it is never reachable unauthenticated.
-- **Untrusted content**: web/PDF/image/audio tool output is wrapped with a marker telling the model it's data, not instructions (prompt-injection defense). Egress of secrets in outbound text/URLs is blocked.
-- **RBAC**: per-actor roles (admin/power/user/reader/guest) per tool and channel, with audit log.
-- **Pacts**: owner-negotiated rules (`protected_path`, `confirm_external`) checked on every tool call, above all modes; external actions in autonomous cycles are blocked outright.
-- **Privacy router** (`PRIVACY_MODE=strict|auto`): private main sessions run on a local model when the main backend is cloud. Your memory never leaves the machine — guaranteed by code, not by promise.
-- **Capability leases**: approvals are scoped (tool, command prefix, TTL, max uses) and revocable.
-- **Secret scanner**: `python3 scripts/secret_scan.py` — fails on secrets anywhere they could be committed; the gitignored `.env` is reported as a note.
+**Local.** Ollama has its own row. Anything else speaking the OpenAI API works
+too — LM Studio, llama.cpp, vLLM, Jan, koboldcpp, GPT4All — and openvurp knocks
+on the usual local ports for you: whatever answers appears in Settings as a
+choice, with its models already listed.
 
-## Architecture
+**Subscription CLIs.** `codex login` with ChatGPT, or `claude` with Claude.ai,
+run on the plan you already pay for. openvurp actively strips `OPENAI_API_KEY`
+from their environment so they can never quietly fall back to metered billing.
+Through Codex's App Server, openvurp's own tools are exposed as dynamic tools —
+searches, files and processes are still executed by openvurp, under its
+approvals and its audit log.
+
+**APIs.** Anthropic, OpenAI, Groq, or any OpenAI-compatible endpoint. Each shows
+as unavailable until its package and key exist.
+
+**Automatic.** A local, free router: it does not call a model to decide which
+model to use, and never picks Ollama or a separately billed API implicitly.
+
+Token spending is bounded on purpose: tool schemas travel in packs rather than
+all at once, history drops stale tool output, and every turn has a ceiling
+(`TURN_TOKEN_BUDGET`, `CONTEXT_MAX_TOKENS`, `DAILY_LLM_BUDGET`).
+
+---
+
+## Security
+
+Enforced by the runtime, not by asking the model nicely:
+
+- **Sandbox** — file tools are confined to the workspace (`SANDBOX_MODE=restricted`); paths outside it are blocked unless listed in `SANDBOX_ALLOWED_PATHS`.
+- **The page is local** — it binds to `127.0.0.1`. Exposing it (`DASHBOARD_HOST=0.0.0.0`, or Docker) requires a `DASHBOARD_TOKEN`, generated and enforced if you do not set one, so it is never reachable unauthenticated.
+- **Untrusted content** — output from the web, PDFs, images and audio is wrapped in a marker telling the model it is data, not instructions. Secrets in outbound text and URLs are blocked from leaving.
+- **RBAC and audit** — per-actor roles across tools and channels, every action logged.
+- **Privacy router** (`PRIVACY_MODE=strict|auto`) — when the main backend is a cloud one, private sessions still run on a local model. Your memory does not leave the machine, by code rather than by promise.
+- **Secret scanner** — `python3 scripts/secret_scan.py` fails on anything committable; the gitignored `.env` is reported as a note.
+
+---
+
+## Layout
 
 ```
-core/        agent loop + kernel, swarm (the roster and how they consult
-             each other), multiplayer (the room), conversation (the one core
-             every channel goes through), chat_store, approvals,
-             anima, growth, mirror, diary, dreaming, curiosity, projects,
-             bonds, senses, forge, pacts, heartbeat, sentinel, learning,
-             memory (+vector), privacy, safety, RBAC/audit/leases,
-             subagents, model router, MCP client, context, LLM client
-tools/       shell, file ops, search, web, browser, process, media, voice, notify…
-channels/    telegram, discord, slack, whatsapp (Baileys bridge) — transport only
-dashboard    the wallet: roster, one chat per agent, the room, live activity,
-             file preview, voice mode, settings
-skills/      markdown skills loaded on demand
-plugins/     drop-in tool extensions
-memory/      everything the agents have lived: chats, lessons, diary, dreams
+main.py          startup, wizard, services
+dashboard.py     the wallet: page, HTTP API, activity stream
+TUI.py           the terminal interface
+
+core/            agent loop and kernel · swarm (the roster, and how they
+                 consult each other) · multiplayer (the room) · conversation
+                 (the single core every channel goes through) · chat_store ·
+                 approvals · anima · growth · mirror · diary · dreaming ·
+                 curiosity · projects · senses · forge · pacts · heartbeat ·
+                 sentinel · learning · memory (+vector) · privacy · safety ·
+                 RBAC/audit/leases · subagents · model router · MCP · LLM client
+tools/           shell · files · search · web · browser · processes · media ·
+                 voice · notifications
+channels/        telegram · discord · slack · whatsapp (Baileys) — transport only
+skills/          markdown skills, loaded on demand
+plugins/         drop-in tools
+memory/          everything the agents lived: chats, lessons, diary, dreams
 ```
 
-The agent's workspace files (`AGENTS.md`, `SOUL.md`, …) are reloaded from disk every turn — when the agent (or you) edits them, the change is live on the next turn. Once the **anima** has traits, it replaces the identity files in context: markdown is the seed, the anima is the life.
+---
 
 ## Development
 
 ```bash
-python3 -m pytest -q                 # 560+ tests
-python3 scripts/secret_scan.py       # before any push
+python3 -m pytest -q               # 578 tests
+python3 scripts/secret_scan.py     # before any push
 ```
 
-See [ROADMAP.md](ROADMAP.md) for direction and [SECURITY.md](SECURITY.md) for reporting issues.
+Direction lives in [ROADMAP.md](ROADMAP.md); how to report a vulnerability is in
+[SECURITY.md](SECURITY.md).
+
+---
+
+## The name
+
+*Vurp* means **octopus** in the dialect of Taranto. I named it after my hometown
+and its sea — a small way of carrying a piece of where I come from into the
+thing I build.
 
 ## License
 
