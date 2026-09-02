@@ -99,11 +99,8 @@ skills/giornale-arco.md
 # pubblicato come se fosse dati veri.
 /chats/
 
-# vurpub: progetto a parte del vecchio openvurp, non pronto per il pubblico.
 # Resta sul disco e funziona (agent.py lo carica se c'e', altrimenti va avanti
 # senza), ma non parte con il repo. Si integrera' quando avra' la sua forma.
-core/vurpub.py
-/vurpub/
 
 # WhatsApp/Baileys: le chiavi di sessione stanno in memory/ (gia' ignorata),
 # e le dipendenze del ponte se le scarica ognuno.
@@ -113,3 +110,4 @@ BOOTSTRAP.md
 scripts/build_meridian.py
 meridian-preview.png
 make_buffett_report.py
+scripts/make_screenshots.py

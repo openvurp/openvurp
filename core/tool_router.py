@@ -18,7 +18,7 @@ from dataclasses import dataclass
 PACKS: dict[str, set[str]] = {
     "core": {
         "shell", "read_file", "grep", "find_files", "load_skill",
-        "load_toolset", "agent_state", "doctor", "vurpub_search",
+        "load_toolset", "agent_state", "doctor",
     },
     "files": {
         "write_file", "edit_file", "edit_lines", "append_file",
@@ -57,10 +57,6 @@ PACKS: dict[str, set[str]] = {
     "security": {
         "audit", "integrity", "sentinel", "setup_marker", "viewport",
     },
-    "marketplace": {
-        "vurpub_search", "vurpub_pull", "vurpub_candidates",
-        "vurpub_approve", "vurpub_reject", "vurpub_share",
-    },
 }
 
 KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -95,9 +91,6 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
     "security": (
         "audit", "integrita", "integrity", "sentinella", "sentinel", "sicurezza",
-    ),
-    "marketplace": (
-        "vurpub", "bancone", "skill condivisa", "soluzione condivisa",
     ),
 }
 

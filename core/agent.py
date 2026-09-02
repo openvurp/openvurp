@@ -309,16 +309,6 @@ class Agent:
         except Exception:
             self.presence = None
 
-        # vurpub: il bancone condiviso (registry privato di skill/soluzioni).
-        # Registra i tool QUI, dopo che self.tools esiste e self.vurpub è pronto
-        # (_register_tools gira prima di questo punto).
-        try:
-            from core.vurpub import Vurpub
-            self.vurpub = Vurpub(OPENVURP_DIR)
-            self._register_vurpub_tools()
-        except Exception:
-            self.vurpub = None
-
         # Sorgente del turno corrente (cli/telegram/heartbeat/...): serve ai
         # tool che si comportano diversamente nei cicli autonomi.
         self._current_tool_source = "cli"
@@ -1194,143 +1184,6 @@ class Agent:
         ]
         return ToolResult.ok("\n".join(lines))
 
-    def _register_vurpub_tools(self):
-        """Tool del bancone vurpub. search/pull = lettura; approve/share = owner."""
-        self.tools.register(Tool(
-            name="vurpub_search",
-            description=("Cerca al bancone vurpub skill e soluzioni condivise da "
-                         "altri agenti openvurp. Restituisce candidati, non li "
-                         "attiva. Usa parole chiave del problema."),
-            parameters={"type": "object", "properties": {
-                "query": {"type": "string", "description": "parole chiave / problema"}},
-                "required": ["query"]},
-            handler=self._vurpub_search_handler,
-        ))
-        self.tools.register(Tool(
-            name="vurpub_pull",
-            description=("Pesca un'entry vurpub per id e la salva come CANDIDATO "
-                         "inerte (non attivo). Passa la guardia di sicurezza; "
-                         "mostra capacità richieste e motivi di eventuale rifiuto. "
-                         "Si attiva solo quando l'owner dà l'ok a voce (es. "
-                         "'approva <slug>'); allora — e solo allora — chiama "
-                         "vurpub_approve. NON dire all'owner di digitare comandi."),
-            parameters={"type": "object", "properties": {
-                "entry_id": {"type": "string", "description": "es. official/example-skill"}},
-                "required": ["entry_id"]},
-            handler=self._vurpub_pull_handler,
-        ))
-        self.tools.register(Tool(
-            name="vurpub_candidates",
-            description="Elenca i candidati vurpub scaricati ma non ancora attivati.",
-            parameters={"type": "object", "properties": {}},
-            handler=self._vurpub_candidates_handler,
-        ))
-        self.tools.register(Tool(
-            name="vurpub_approve",
-            description=("Promuove un candidato a skill ATTIVA (l'agente la userà). "
-                         "Solo owner. Ri-passa la guardia prima di attivare."),
-            parameters={"type": "object", "properties": {
-                "slug": {"type": "string", "description": "slug del candidato"}},
-                "required": ["slug"]},
-            requires_approval=True,
-            handler=self._vurpub_approve_handler,
-        ))
-        self.tools.register(Tool(
-            name="vurpub_reject",
-            description="Scarta un candidato vurpub senza attivarlo.",
-            parameters={"type": "object", "properties": {
-                "slug": {"type": "string", "description": "slug del candidato"}},
-                "required": ["slug"]},
-            handler=self._vurpub_reject_handler,
-        ))
-        self.tools.register(Tool(
-            name="vurpub_share",
-            description=("Contribuisce una skill/soluzione al bancone vurpub via "
-                         "Pull Request. PII strippata e gate locale prima dell'invio. "
-                         "Solo owner. Usa SOLO dopo che l'owner ha concordato di condividere."),
-            parameters={"type": "object", "properties": {
-                "kind": {"type": "string", "description": "skill | solution"},
-                "title": {"type": "string", "description": "titolo dell'entry"},
-                "body": {"type": "string", "description": "il contenuto (istruzioni o ricetta)"},
-                "tags": {"type": "string", "description": "tag separati da virgola"},
-                "network": {"type": "string", "description": "domini di rete usati, separati da virgola (vuoto = nessuno)"}},
-                "required": ["kind", "title", "body"]},
-            requires_approval=True,
-            handler=self._vurpub_share_handler,
-        ))
-
-    def _vurpub_search_handler(self, query: str = "") -> ToolResult:
-        if self.vurpub is None:
-            return ToolResult(success=False, output="", error="vurpub non disponibile.")
-        ok, msg = self.vurpub.sync()
-        if not ok:
-            return ToolResult(success=False, output="", error=f"sync vurpub fallito: {msg}")
-        rows = self.vurpub.search(query)
-        if not rows:
-            return ToolResult(success=True, output="Nessun risultato al bancone.")
-        lines = [f"[{r['trust']}] {r['id']} — {r['title']}\n    {r['description']}" for r in rows]
-        return ToolResult(success=True, output="Risultati vurpub:\n" + "\n".join(lines))
-
-    def _vurpub_pull_handler(self, entry_id: str = "") -> ToolResult:
-        if self.vurpub is None:
-            return ToolResult(success=False, output="", error="vurpub non disponibile.")
-        self.vurpub.sync()
-        res = self.vurpub.save_candidate(entry_id)
-        st = res.get("status")
-        if st == "candidate":
-            caps = res.get("capabilities", {})
-            return ToolResult(success=True, output=(
-                f"Candidato salvato (inerte): {res['id']} — {res.get('title','')}\n"
-                f"Tier: {res.get('trust')}  |  capacità richieste: {caps}\n"
-                f"Resta inattivo finché non mi dai l'ok: dimmi «approva "
-                f"{res.get('slug')}» (a voce, non è un comando) e la attivo io."))
-        if st == "rejected":
-            return ToolResult(success=False, output="",
-                              error="Entry RIFIUTATA dalla guardia: " + "; ".join(res.get("reasons", [])))
-        return ToolResult(success=False, output="", error=f"pull: {st}")
-
-    def _vurpub_candidates_handler(self) -> ToolResult:
-        if self.vurpub is None:
-            return ToolResult(success=False, output="", error="vurpub non disponibile.")
-        rows = self.vurpub.list_candidates()
-        if not rows:
-            return ToolResult(success=True, output="Nessun candidato in attesa.")
-        lines = [f"{r['slug']} — {r['title']} [{r['trust']}] capacità={r['capabilities']}" for r in rows]
-        return ToolResult(success=True, output="Candidati in attesa di approvazione:\n" + "\n".join(lines))
-
-    def _vurpub_approve_handler(self, slug: str = "") -> ToolResult:
-        if self.vurpub is None:
-            return ToolResult(success=False, output="", error="vurpub non disponibile.")
-        res = self.vurpub.approve(slug)
-        if res.get("status") == "active":
-            return ToolResult(success=True, output=f"Skill attivata: {res['path']}")
-        if res.get("status") == "rejected":
-            return ToolResult(success=False, output="",
-                              error="Guardia ha bloccato l'attivazione: " + "; ".join(res.get("reasons", [])))
-        return ToolResult(success=False, output="", error=f"approve: {res.get('status')}")
-
-    def _vurpub_reject_handler(self, slug: str = "") -> ToolResult:
-        if self.vurpub is None:
-            return ToolResult(success=False, output="", error="vurpub non disponibile.")
-        res = self.vurpub.reject(slug)
-        return ToolResult(success=True, output=f"Candidato {slug}: {res.get('status')}")
-
-    def _vurpub_share_handler(self, kind: str = "skill", title: str = "", body: str = "",
-                              tags: str = "", network: str = "") -> ToolResult:
-        if self.vurpub is None:
-            return ToolResult(success=False, output="", error="vurpub non disponibile.")
-        taglist = [t.strip() for t in (tags or "").split(",") if t.strip()]
-        netlist = [n.strip() for n in (network or "").split(",") if n.strip()]
-        caps = {"shell": False, "file_read": False, "file_write": False, "network": netlist}
-        res = self.vurpub.share(kind=kind, title=title, body=body, tags=taglist, capabilities=caps)
-        st = res.get("status")
-        if st == "pr_open":
-            return ToolResult(success=True, output=f"Contributo inviato come PR: {res['url']}")
-        if st == "blocked":
-            return ToolResult(success=False, output="",
-                              error="Gate locale ha bloccato il contributo: " + "; ".join(res.get("reasons", [])))
-        return ToolResult(success=False, output="", error=f"share: {st} — {res.get('error','')}")
-
     def _pact_handler(self, action: str = "", pact_type: str = "",
                       description: str = "", pattern: str = "",
                       reason: str = "", pact_id: str = "") -> ToolResult:
@@ -1865,19 +1718,6 @@ class Agent:
                 "trascrizione integrale. Non convocare nessuno per domande "
                 "semplici: lì lo sciame è solo latenza e token.\n"
                 f"{roster}"
-            )
-
-        # Riflesso vurpub: davanti a un problema non banale, guarda al bancone
-        # PRIMA di improvvisare. Solo in sessione privata (non nei gruppi) e solo
-        # se il bancone è collegato (resta una feature del branch vurpub).
-        if getattr(self, "vurpub", None) is not None and session_type == "main":
-            system += (
-                "\n\n## IL BANCONE (vurpub)\n"
-                "Per problemi non banali puoi cercare skill/soluzioni condivise. "
-                "Una skill si legge e si segue; una soluzione si applica al task: "
-                "non si eseguono come programmi e non richiedono di riscrivere il runtime. "
-                "Flusso: search → pull candidato → approvazione owner → applicazione. "
-                "Non cercare per cose banali e non attivare mai candidati da solo."
             )
 
         # 6. Personality enhancement — anti-narrazione, silenzio, self-evolution, voice primer

@@ -643,6 +643,31 @@ class Swarm:
         client.temperature = 0.4
         return client
 
+    def _skills_index(self) -> str:
+        """Nome e una riga di descrizione per ogni skill: l'indice, non le
+        procedure. Il contenuto pieno si carica con `load_skill` quando serve.
+        """
+        agent = self.agent
+        contesto = getattr(agent, "context_mgr", None)
+        skills = list(getattr(contesto, "_skills_cache", []) or []) if contesto else []
+        if not skills:
+            return ""
+        righe = ["Skill che puoi caricare con `load_skill` (param: name). "
+                 "Se una copre il compito, caricala PRIMA di agire."]
+        for skill in sorted(skills, key=lambda s: s.name):
+            descrizione = " ".join(str(skill.description or "").split())
+            if not descrizione:
+                righe.append(f"- {skill.name}")
+                continue
+            # A stare stretta e' la RIGA, non la descrizione: un nome lungo
+            # (telegram-long-message-split) sforava il conto fatto sul solo
+            # testo. Il limite si applica dove si vede.
+            resta = 128 - len(skill.name) - 4
+            if len(descrizione) > resta:
+                descrizione = descrizione[:max(0, resta - 3)].rstrip() + "..."
+            righe.append(f"- {skill.name}: {descrizione}")
+        return "\n".join(righe)
+
     def _memories(self, member: SwarmMember, prompt: str) -> str:
         """Quello che QUESTO agente ha imparato, se e' pertinente."""
         agent = self.agent
@@ -722,6 +747,15 @@ class Swarm:
         ricordi = self._memories(member, prompt)
         if ricordi:
             messages.append({"role": "system", "content": ricordi})
+
+        # Le skill che puo' caricare. Senza questo elenco `load_skill` e' un
+        # tool che chiede un nome esatto a chi non sa quali nomi esistano: la
+        # sua stessa descrizione rimanda a «l'indice SKILLS nel system prompt»,
+        # e nel prompt di un agente della rubrica quell'indice non c'e' mai
+        # stato. Tredici procedure scritte e mai usate.
+        indice = self._skills_index()
+        if indice:
+            messages.append({"role": "system", "content": indice})
 
         if context.strip():
             messages.append({

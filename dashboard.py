@@ -467,8 +467,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(svg)))
             self.end_headers()
             return self.wfile.write(svg)
-        if path == "/octopus.png":
-            return self._serve_file("dashboard/octopus.png", "image/png")
 
         if not self._authed():
             if path in {"/", "/index.html"}:
@@ -1333,8 +1331,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "<body style='font-family:system-ui;background:#212121;color:#ececec;"
             "display:grid;place-items:center;height:100vh;margin:0'>"
             "<div style='text-align:center'>"
-            "<img src='/octopus.png' style='width:56px;height:56px;"
-            "object-fit:contain;margin-bottom:14px' alt=''>"
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="56" height="56" style="margin-bottom:14px"><g transform="translate(16 15.5) scale(.86) translate(-16 -16)"><g fill="#e8654a"><rect x="4.48" y="24.2" width="4.38" height="5.8" rx="2.19"/><rect x="10.70" y="24.2" width="4.38" height="6.6" rx="2.19"/><rect x="16.92" y="24.2" width="4.38" height="6.6" rx="2.19"/><rect x="23.14" y="24.2" width="4.38" height="5.8" rx="2.19"/><path d="M0 14.1A14.7 14.1 0 0 1 14.7 0A17.3 14.7 0 0 1 32 14.7A16.6 17.3 0 0 1 15.4 32A15.4 17.9 0 0 1 0 14.1Z"/></g><g fill="#171717"><rect x="8.32" y="10.24" width="3.52" height="9.6" rx="1.76"/><rect x="19.84" y="10.24" width="3.52" height="9.6" rx="1.76"/></g></g></svg>'
             "<h2 style='font-weight:600'>openvurp</h2>"
             "<p style='color:#9b9b9b;margin:8px 0'>Accesso protetto. Apri la dashboard col tuo token:</p>"
             "<code style='background:#2f2f2f;padding:6px 12px;border-radius:8px;font-size:13px'>"

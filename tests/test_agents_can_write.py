@@ -116,3 +116,42 @@ def test_outside_the_workspace_it_is_refused_and_that_is_correct():
     result = write_file_handler(fuori, "contenuto")
     assert not result.success, "la sandbox non sta confinando niente"
     assert "sandbox" in (result.error or "").lower()
+
+
+# ── una capacità che non si sa di avere non è una capacità ─────────────────
+
+def test_an_agent_is_told_which_skills_exist(swarm):
+    """`load_skill` asks for an exact name. Nobody was giving the names.
+
+    The tool's own description says to look at "the SKILLS index in the system
+    prompt". The main agent has that index. An agent in the roster never did:
+    it could load a skill only by guessing its name. Thirteen written
+    procedures, unusable.
+    """
+    indice = swarm._skills_index()
+    assert indice, "nessun indice: le skill restano invisibili"
+    assert "load_skill" in indice, "non dice nemmeno come si caricano"
+    # Il nome esatto e' quello che il tool pretende.
+    assert "- coding:" in indice or "- coding" in indice
+
+
+def test_the_index_is_an_index_not_the_procedures(swarm):
+    """The whole point of loading on demand: the prompt must not carry them all."""
+    indice = swarm._skills_index()
+    assert len(indice) < 4000, f"{len(indice)} battute: sono le procedure, non l'indice"
+    for riga in indice.splitlines()[1:]:
+        assert len(riga) < 140, f"riga troppo lunga, e' contenuto: {riga[:60]}"
+
+
+def test_the_index_travels_beside_the_prompt_not_inside_it(swarm):
+    """It is data, not rulebook: the 900-char guard protects the rules.
+
+    Putting it inside would either blow that budget or force the rules out,
+    and the guard exists for a good reason — a long rulebook makes the model
+    orbit the instructions instead of the work.
+    """
+    import inspect
+    source = inspect.getsource(swarm.__class__._speak)
+    assert "_skills_index()" in source
+    assert 'role": "system"' in source
+    assert len(swarm._system_prompt(swarm.resolve("dev"), [])) < 900
