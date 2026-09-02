@@ -94,10 +94,15 @@ a box where you type a model name from memory.
 
 ## Running it
 
+**openvurp is the page — there is no second interface.** A terminal chat and a
+full TUI used to sit beside it; they were two more doors onto the same house,
+and nobody walked through them. What stays in the terminal is what a page
+cannot do: configure the thing before it can answer, and tell you what is
+broken when it will not start.
+
 | command | what it does |
 |---|---|
-| `openvurp` | the page in your browser — the normal way |
-| `openvurp --cli` | the terminal instead |
+| `openvurp` | the page in your browser |
 | `openvurp --headless` | services only, no interface |
 | `openvurp --setup` | redo the setup wizard |
 | `openvurp --doctor` | check what's broken |
@@ -192,7 +197,6 @@ promote to a reusable plugin — and adopting one is always your call).
 ```
 main.py          startup, setup wizard, services
 dashboard.py     the page: HTML, HTTP API, live activity
-TUI.py           the terminal
 
 core/            agent loop · swarm (the roster, and how they consult each
                  other) · multiplayer (the room) · conversation (the single

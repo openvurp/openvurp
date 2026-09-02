@@ -362,7 +362,7 @@ GATEWAY_HOST = _env("GATEWAY_HOST", "127.0.0.1")
 GATEWAY_PORT = _env_int("GATEWAY_PORT", 8421)
 
 # --- Auto-update ---
-# When on, the TUI periodically checks the git repo and applies updates fast-forward sicuri da sola (con smoke-test e rollback),
+# When on, openvurp periodically checks the git repo and applies safe fast-forward updates on its own (with smoke-test and rollback),
 # then restarts. Meant for when the owner is away. Default: off.
 AUTO_UPDATE = _env_bool("AUTO_UPDATE", False)
 AUTO_UPDATE_INTERVAL = _env_int("AUTO_UPDATE_INTERVAL", 3600)  # secondi

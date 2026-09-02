@@ -34,7 +34,6 @@ dependencies = [
     "httpx>=0.24",
     "beautifulsoup4>=4.12",
     "rich>=13.0",
-    "prompt_toolkit>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -83,7 +82,6 @@ all = [
 
 [project.scripts]
 openvurp = "main:app_main"
-openvurp-tui = "TUI:main"
 openvurp-gateway = "runtime_gateway:main"
 
 [project.urls]
@@ -94,7 +92,7 @@ Issues = "https://github.com/openvurp/openvurp/issues"
 [tool.setuptools]
 packages = ["core", "core.security", "tools", "channels", "skills", "plugins"]
 py-modules = ["main", "agent", "config", "dashboard", "ears", "cli",
-              "reset", "runtime_gateway", "TUI", "watcher", "voice"]
+              "runtime_gateway", "watcher", "voice"]
 
 [tool.setuptools.package-data]
 "*" = ["*.md", "*.json"]

@@ -8,16 +8,13 @@ L'Agent è in core/agent.py.
 import os
 import sys
 import time
-import glob
 import threading
-import shutil
 from datetime import datetime
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from rich.syntax import Syntax
 from rich.live import Live
 from rich.markdown import Markdown
 from rich import box
@@ -45,59 +42,6 @@ SPINNER_PHRASES = [
 ]
 SPINNER_FRAMES = ["✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳"]
 GLYPH = "\u2733"  # ✳
-
-
-# Slash command → short help. Drives the popup menu + autocomplete in the box.
-SLASH_COMMAND_HELP = {
-    "mode": "approval mode: safe | auto | plan",
-    "progetti": "long-term projects",
-    "fucina": "the forge: tools it built for itself",
-    "sensi": "what the agent is watching",
-    "specchio": "mirror: corrections no longer repeated",
-    "patti": "active pacts",
-    "memory": "memory files",
-    "skills": "available skills",
-    "dashboard": "start web dashboard (chat in browser)",
-    "update": "self-update from git, then restart",
-    "restart": "restart the runtime in place",
-    "doctor": "runtime diagnostics",
-    "trace": "current session trace",
-    "self": "agent panel",
-    "integrity": "verify code integrity",
-    "evolve": "self-evolution candidates",
-    "voice": "toggle voice replies",
-    "audio": "toggle audio / transcription",
-    "mic": "microphone input",
-    "setup": "guided setup wizard",
-    "exit": "quit",
-}
-
-try:
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.completion import Completer, Completion
-    from prompt_toolkit.history import InMemoryHistory
-    from prompt_toolkit.patch_stdout import patch_stdout
-    from prompt_toolkit.formatted_text import ANSI, HTML
-    _PT_OK = True
-
-    class _SlashCompleter(Completer):
-        """Show the command menu when you type `/` and autocomplete them."""
-
-        def get_completions(self, document, complete_event):
-            text = document.text_before_cursor
-            if not text.startswith("/") or " " in text:
-                return
-            prefix = text[1:].lower()
-            for name, desc in SLASH_COMMAND_HELP.items():
-                if name.startswith(prefix):
-                    yield Completion(
-                        name,
-                        start_position=-len(prefix),
-                        display=HTML(f"/<b>{name}</b>"),
-                        display_meta=desc,
-                    )
-except Exception:  # prompt_toolkit missing → fall back to the input() prompt
-    _PT_OK = False
 
 
 def load_file(path):
@@ -129,22 +73,6 @@ class UI:
         self._at_prompt = False
         self._pending_notes: list = []
         self._notes_lock = threading.Lock()
-
-        # prompt_toolkit: box dell'input con menu slash + autocompletamento.
-        # patch_stdout gestisce l'output asincrono (heartbeat) da solo.
-        self._pt_session = None
-        if _PT_OK:
-            try:
-                from prompt_toolkit.styles import Style
-                self._pt_session = PromptSession(
-                    history=InMemoryHistory(),
-                    completer=_SlashCompleter(),
-                    complete_while_typing=True,
-                    reserve_space_for_menu=6,  # spazio per il menu / anche a schermo pieno
-                    style=Style.from_dict({"bottom-toolbar": "noreverse"}),
-                )
-            except Exception:
-                self._pt_session = None
 
     def notify(self, renderable) -> None:
         """Stampa un output asincrono senza rompere il box di input.
@@ -213,92 +141,6 @@ class UI:
             grid, border_style=BRAND, box=box.ROUNDED,
             padding=(0, 1), expand=False,
         ))
-
-    def goodbye(self):
-        self.console.print(f"\n  [dim]{GLYPH} See you![/dim]\n")
-
-    # ── Prompt ──
-
-    # Il tratto orizzontale del box, come costante e non scritto dentro le
-    # f-string. Non e' estetica: una backslash nella PARTE ESPRESSIONE di una
-    # f-string e' sintassi valida solo dal 3.12, e il progetto dichiara 3.10.
-    # Su 3.10 e 3.11 non falliva un test — il file non si leggeva proprio.
-    _RIGA = "\u2500"
-
-    def _bar(self, text: str = ""):
-        cols = shutil.get_terminal_size((80, 24)).columns
-        c = "\033[38;5;240m"
-        r = "\033[0m"
-        if text:
-            pad = max(cols - len(text) - 4, 2)
-            sys.stdout.write(f"{c}{self._RIGA * 2}{text}{self._RIGA * pad}{r}\n")
-        else:
-            sys.stdout.write(f"{c}{self._RIGA * cols}{r}\n")
-        sys.stdout.flush()
-
-    def _status_visible(self, context_pct: int) -> str:
-        ctx = f" \u00b7 ctx {context_pct}%" if context_pct > 0 else ""
-        mode = getattr(self, "_approval_mode", "")
-        mode_s = f" \u00b7 {mode}" if mode and mode != "safe" else ""
-        return f" {self._model} \u00b7 {self._backend}{ctx}{mode_s} "
-
-    def prompt(self, context_pct: int = 0) -> str:
-        """Box input con menu slash + autocompletamento (prompt_toolkit).
-
-        Quando digiti `/` compaiono i comandi; Tab/frecce per autocompletare.
-        Box, multilinea, resize e output asincrono gestiti in modo robusto.
-        """
-        if self._pt_session is None:
-            return self._prompt_legacy(context_pct)
-
-        cols = shutil.get_terminal_size((80, 24)).columns
-        c = "\033[38;5;240m"
-        r = "\033[0m"
-        status = self._status_visible(context_pct)
-        pad = max(cols - len(status) - 4, 2)
-        # Box stile Claude Code: bordo sopra con angoli arrotondati, riga di
-        # input, bordo di chiusura dopo l'invio. Status nel bordo alto (niente
-        # bottom_toolbar: ancorava la barra in basso riservando righe vuote).
-        # Il menu `/` compare solo quando digiti.
-        top = f"{c}\u256d{self._RIGA}{status}{self._RIGA * pad}\u256e{r}"
-        bottom = f"{c}\u2570{self._RIGA * max(cols - 2, 2)}\u256f{r}"
-
-        sys.stdout.write("\n" + top + "\n")
-        sys.stdout.flush()
-        try:
-            with patch_stdout(raw=True):
-                result = self._pt_session.prompt(
-                    ANSI(f"{c}\u2502{r} \033[1;97m>\033[0m "),
-                    reserve_space_for_menu=6,
-                )
-        except EOFError:
-            result = "/exit"
-        except KeyboardInterrupt:
-            result = ""
-        sys.stdout.write(bottom + "\n")
-        sys.stdout.flush()
-        return result or ""
-
-    def _prompt_legacy(self, context_pct: int = 0) -> str:
-        """Fallback senza prompt_toolkit: box semplice + input()."""
-        cols = shutil.get_terminal_size((80, 24)).columns
-        c = "\033[38;5;240m"
-        r = "\033[0m"
-        status = self._status_visible(context_pct)
-        pad = max(cols - len(status) - 4, 2)
-        sys.stdout.write(f"\n{c}\u256d{self._RIGA}{status}{self._RIGA * pad}\u256e{r}\n")
-        sys.stdout.flush()
-        self._at_prompt = True
-        try:
-            result = input(f"{c}\u2502{r} \033[1;97m>\033[0m ")
-        except EOFError:
-            result = "/exit"
-        finally:
-            self._at_prompt = False
-        sys.stdout.write(f"{c}\u2570{self._RIGA * max(cols - 2, 2)}\u256f{r}\n")
-        sys.stdout.flush()
-        self.flush_notes()
-        return result
 
     def confirm(self, question: str) -> bool:
         self.console.print(f"\n  [yellow]! {question}[/yellow]")
@@ -464,173 +306,3 @@ class UI:
 
     # ── Slash command panels ──
 
-    def show_memory_table(self):
-        os.makedirs(MEMORY_DIR, exist_ok=True)
-        files = []
-        for f in sorted(os.listdir(MEMORY_DIR)):
-            fp = os.path.join(MEMORY_DIR, f)
-            if os.path.isfile(fp):
-                stat = os.stat(fp)
-                preview = ""
-                try:
-                    with open(fp, "r", encoding="utf-8") as fh:
-                        preview = fh.read(100).replace('\n', ' ')
-                except Exception:
-                    pass
-                files.append({
-                    "filename": f,
-                    "size": stat.st_size,
-                    "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                    "preview": preview,
-                })
-
-        if not files:
-            self.console.print(f"\n  [{DIM}](empty memory)[/{DIM}]\n")
-            return
-
-        table = Table(box=box.SIMPLE_HEAVY, border_style=DIM, padding=(0, 1), show_edge=False)
-        table.add_column("File", style="white")
-        table.add_column("Size", style="dim", justify="right")
-        table.add_column("Modified", style="dim")
-        table.add_column("Preview", style=DIM, max_width=40, no_wrap=True)
-
-        for f in files:
-            table.add_row(f["filename"], f"{f['size']} B", f["modified"], f["preview"][:40])
-
-        # Subdirectories
-        subdirs = []
-        for d in ['lessons', 'projects', 'sessions']:
-            dp = os.path.join(MEMORY_DIR, d)
-            if os.path.exists(dp):
-                count = len([x for x in os.listdir(dp) if os.path.isfile(os.path.join(dp, x))])
-                subdirs.append(f"{d}/: {count} file")
-
-        self.console.print()
-        self.console.print(f"  [bold {ACCENT}]{GLYPH} Memory[/bold {ACCENT}]")
-        self.console.print(table)
-        if subdirs:
-            for s in subdirs:
-                self.console.print(f"    [{DIM}]{s}[/{DIM}]")
-        self.console.print()
-
-    def show_skills_table(self):
-        skills = []
-        if os.path.exists(SKILLS_DIR):
-            for f in sorted(glob.glob(os.path.join(SKILLS_DIR, "*.md"))):
-                name = os.path.splitext(os.path.basename(f))[0]
-                desc = ""
-                try:
-                    with open(f, "r", encoding="utf-8") as fh:
-                        first = fh.readline().strip()
-                        if first.startswith("#"):
-                            first = fh.readline().strip()
-                        desc = first[:80]
-                except Exception:
-                    pass
-                skills.append({"name": name, "description": desc})
-
-        if not skills:
-            self.console.print(f"\n  [{DIM}](no skills -- add .md files in skills/)[/{DIM}]\n")
-            return
-
-        table = Table(box=box.SIMPLE_HEAVY, border_style=DIM, padding=(0, 1), show_edge=False)
-        table.add_column("Name", style="white bold")
-        table.add_column("Description", style="dim")
-
-        for s in skills:
-            table.add_row(s["name"], s["description"])
-
-        self.console.print()
-        self.console.print(f"  [bold {ACCENT}]{GLYPH} Skills[/bold {ACCENT}]")
-        self.console.print(table)
-        self.console.print(f"    [{DIM}]Add .md files in skills/[/{DIM}]")
-        self.console.print()
-
-    def show_self_panel(self):
-        content = Text()
-        # Core modules
-        for f in ['config.py', 'agent.py', 'main.py']:
-            path = os.path.join(OPENVURP_DIR, f)
-            if os.path.exists(path):
-                size = os.path.getsize(path)
-                lines = load_file(path).count('\n')
-                content.append(f"  {os.path.basename(path)}: ", style="dim")
-                content.append(f"{lines} righe, {size} bytes\n", style="white")
-
-        # Core modules
-        core_dir = os.path.join(OPENVURP_DIR, "core")
-        if os.path.exists(core_dir):
-            content.append(f"\n  core/\n", style=f"bold {ACCENT}")
-            for f in sorted(os.listdir(core_dir)):
-                if f.endswith('.py') and f != '__init__.py':
-                    path = os.path.join(core_dir, f)
-                    size = os.path.getsize(path)
-                    lines = load_file(path).count('\n')
-                    content.append(f"    {f}: ", style="dim")
-                    content.append(f"{lines} righe, {size} bytes\n", style="white")
-
-        # Tools
-        tools_dir = os.path.join(OPENVURP_DIR, "tools")
-        if os.path.exists(tools_dir):
-            content.append(f"\n  tools/\n", style=f"bold {ACCENT}")
-            for f in sorted(os.listdir(tools_dir)):
-                if f.endswith('.py') and f != '__init__.py':
-                    path = os.path.join(tools_dir, f)
-                    size = os.path.getsize(path)
-                    lines = load_file(path).count('\n')
-                    content.append(f"    {f}: ", style="dim")
-                    content.append(f"{lines} righe, {size} bytes\n", style="white")
-
-        content.append(f"\n  dir: ", style="dim")
-        content.append(f"{OPENVURP_DIR}\n", style="white")
-
-        self.console.print()
-        self.console.print(Panel(
-            content,
-            title=f"[bold]{GLYPH} Il mio codice[/bold]", title_align="left",
-            border_style=ACCENT, box=box.ROUNDED, padding=(0, 1),
-        ))
-        self.console.print()
-
-    def show_trace(self, trace_text: str):
-        """Mostra trace della sessione corrente."""
-        self.console.print()
-        self.console.print(Panel(
-            Text(trace_text, style="white"),
-            title=f"[bold]{GLYPH} Session Trace[/bold]", title_align="left",
-            border_style=ACCENT, box=box.ROUNDED, padding=(0, 1),
-        ))
-        self.console.print()
-
-    def show_report(self, report_text: str):
-        """Diario di crescita: quanto l'agente è cresciuto con l'owner."""
-        self.console.print()
-        self.console.print(Panel(
-            Text(report_text, style="white"),
-            title=f"[bold]{GLYPH} Report[/bold]", title_align="left",
-            border_style=ACCENT, box=box.ROUNDED, padding=(0, 1),
-        ))
-        self.console.print()
-
-    def show_doctor(self, report_text: str):
-        self.console.print()
-        self.console.print(Panel(
-            Text(report_text, style="white"),
-            title=f"[bold]{GLYPH} Doctor[/bold]", title_align="left",
-            border_style=ACCENT, box=box.ROUNDED, padding=(0, 1),
-        ))
-        self.console.print()
-
-    def show_evolve(self):
-        ep = os.path.join(MEMORY_DIR, "evoluzione.md")
-        text = load_file(ep) if os.path.exists(ep) else ""
-        if not text:
-            self.console.print(f"\n  [{DIM}](no evolution yet)[/{DIM}]\n")
-            return
-        self.console.print()
-        self.console.print(Panel(
-            Text(text[:1000], style="dim"),
-            title=f"[bold]{GLYPH} Evolution[/bold]", title_align="left",
-            border_style=ACCENT, box=box.ROUNDED, padding=(0, 1),
-        ))
-        self.console.print()

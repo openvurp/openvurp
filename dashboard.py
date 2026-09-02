@@ -86,7 +86,7 @@ def filter_stream_snapshot(snapshot: list[dict], requested_chat: str = "",
 class CaptureUI:
     """Avvolge la UI reale dell'host e cattura SOLO il testo della risposta
     dell'assistente. Tutto il resto (status, tool, spinner) è delegato alla UI
-    reale, così l'attività resta visibile nell'host (TUI/CLI). Funziona con
+    reale, così l'attività resta visibile anche nel terminale che l'ha avviato. Funziona con
     qualunque host perché non assume nulla sull'interfaccia della UI reale."""
 
     def __init__(self, real_ui):

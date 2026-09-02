@@ -41,9 +41,7 @@ def parse_args():
     parser.add_argument("--menu", action="store_true",
                         help="Always show the startup menu, even if disabled in .env")
     parser.add_argument("--no-menu", action="store_true",
-                        help="Skip the startup menu and go straight to the chat")
-    parser.add_argument("--cli", action="store_true",
-                        help="Use the terminal chat instead of the web interface")
+                        help="Skip the startup menu")
     parser.add_argument("--no-browser", action="store_true",
                         help="Do not open the browser automatically")
     return parser.parse_args()
@@ -329,7 +327,7 @@ def start_heartbeat_background(agent, ui):
                 _print_heartbeat(text)
             return
         # target == "auto" (default): scrivi dove l'owner è davvero.
-        # Attivo da poco sulla TUI → TUI; assente → notifica sul telefono.
+        # Attivo da poco sulla pagina → pagina; assente → notifica sul telefono.
         channel = ""
         try:
             if agent.presence is not None:
@@ -943,9 +941,9 @@ def main():
 
     # In modalita' web il terminale non e' l'interfaccia: e' il posto da cui
     # leggere l'indirizzo. Il banner grande, gli avvisi di capacita' e la
-    # diagnostica appartengono a `--cli` e a /doctor, non a un avvio riuscito.
+    # diagnostica appartengono a --doctor, non a un avvio riuscito.
     global QUIET_STARTUP
-    web_mode = not args.cli and not args.headless and not args.prompt
+    web_mode = not args.headless and not args.prompt
     QUIET_STARTUP = web_mode
     if not web_mode:
         ui.welcome(model=config.LLM_MODEL, backend=config.LLM_BACKEND)
@@ -978,13 +976,10 @@ def main():
 
     # ── Dashboard ──
     dashboard = None
-    # openvurp E' l'interfaccia web: la dashboard parte sempre, tranne quando
-    # chiedi esplicitamente il terminale con --cli.
-    dashboard_enabled = (
-        not args.cli
-        or getattr(config, 'DASHBOARD_ENABLED', False)
-        or args.dashboard or args.headless
-    )
+    # openvurp E' l'interfaccia web, punto: la pagina parte sempre. C'era un
+    # `--cli` che apriva una chat da terminale al suo posto, e una TUI intera
+    # come terza porta. Una sola porta, quella che si usa davvero.
+    dashboard_enabled = True
     if dashboard_enabled:
         dashboard_port = getattr(config, 'DASHBOARD_PORT', 8420)
         dashboard = start_dashboard_background(agent, ui, port=dashboard_port)
@@ -1077,7 +1072,7 @@ def main():
         pass
     # Il saluto ha senso dove qualcuno lo legge: in modalita' web la chat e'
     # nel browser, e un monologo nel terminale sarebbe solo token spesi.
-    web_mode = not args.cli and not args.headless and not args.prompt
+    web_mode = not args.headless and not args.prompt
     with _agent_lock:
         if web_mode:
             pass
@@ -1103,8 +1098,8 @@ def main():
 
     # ── Interfaccia web (default) ──
     # `openvurp` apre il portafoglio degli agenti nel browser. Il terminale
-    # resta disponibile con --cli, ma non e' piu' la porta d'ingresso.
-    if not args.cli and not args.headless:
+    # e' l'unica porta: la chat da terminale e la TUI non ci sono piu'.
+    if not args.headless:
         port = int(getattr(config, 'DASHBOARD_PORT', 8420) or 8420)
         url = f"http://localhost:{port}/"
         token = str(getattr(config, "DASHBOARD_TOKEN", "") or "")
@@ -1113,7 +1108,7 @@ def main():
         if dashboard is None:
             ui.console.print(
                 "  [red]Interfaccia web non avviata.[/red] "
-                "[dim]Controlla la porta con /doctor, oppure usa `openvurp --cli`.[/dim]"
+                "[dim]Controlla la porta con `openvurp --doctor`.[/dim]"
             )
             return
         ui.console.print(f"\n  [bold]openvurp[/bold] [dim]— wallet for agents[/dim]")
@@ -1124,7 +1119,7 @@ def main():
         ) if on]
         if services:
             ui.console.print(f"  [dim]running: {' · '.join(services)}[/dim]")
-        ui.console.print("  [dim]Ctrl+C per fermare · `openvurp --cli` per il terminale[/dim]\n")
+        ui.console.print("  [dim]Ctrl+C per fermare[/dim]\n")
         if not args.no_browser:
             try:
                 import webbrowser
@@ -1154,276 +1149,6 @@ def main():
             agent.save_session()
             agent.cleanup()
             return
-
-    # ── Stato voce ──
-    voice_enabled = getattr(config, 'VOICE_ENABLED', False)
-
-    # ── Loop principale ──
-    while True:
-        try:
-            # Calcola % contesto usato per mostrarlo nel prompt.
-            # Preferisci i token reali dell'ultima chiamata API (esatti,
-            # includono anche system prompt e schema tool); fallback alla stima.
-            _ctx_pct = 0
-            try:
-                _last_in = agent.session.tokens.last_input_tokens
-                if _last_in > 0:
-                    _ctx_pct = int(_last_in / agent.context_mgr.max_tokens * 100)
-                else:
-                    _budget = agent.context_mgr.check_budget(agent.messages)
-                    _ctx_pct = int(_budget["ratio"] * 100)
-                _ctx_pct = min(_ctx_pct, 100)
-            except Exception:
-                pass
-            inp = ui.prompt(context_pct=_ctx_pct)
-            if not inp.strip():
-                continue
-            inp = inp.strip()
-
-            # Slash commands
-            if inp.lower() in ('/exit', '/quit', '/q', 'exit', 'quit'):
-                agent.save_session()
-                agent.cleanup()
-                if heartbeat:
-                    heartbeat.stop()
-                if sentinel:
-                    sentinel.stop()
-                ui.goodbye()
-                break
-            elif inp.strip() in ('/', '/help', '/?'):
-                ui.console.print(CLI_HELP)
-                continue
-            elif inp.lower() == '/memory':
-                ui.show_memory_table()
-                continue
-            elif inp.lower() == '/swarm' or inp.lower().startswith('/swarm '):
-                _handle_swarm_command(inp, agent, ui)
-                continue
-            elif _addresses_swarm_member(inp, agent):
-                # "@revisore che ne pensi?" — parlare a UNO specialista.
-                # Se il nome non è di nessuno, il messaggio resta chat normale:
-                # una @ non deve dirottare quello che stavi scrivendo.
-                _handle_swarm_command(inp, agent, ui)
-                continue
-            elif inp.lower() == '/skills':
-                ui.show_skills_table()
-                continue
-            elif inp.lower() == '/doctor':
-                from core.doctor import build_doctor_report
-                ui.show_doctor(build_doctor_report(OPENVURP_DIR, agent.tools.names()).render())
-                continue
-            elif inp.lower() == '/setup':
-                from core.doctor import fix_runtime_issues
-                ui.show_doctor(
-                    fix_runtime_issues(
-                        OPENVURP_DIR,
-                        allowed_telegram_users=list(getattr(config, "TELEGRAM_ALLOWED_USERS", []) or []),
-                    ).render()
-                )
-                agent.rbac = agent.rbac.__class__(MEMORY_DIR)
-                continue
-            elif inp.lower() == '/self':
-                ui.show_self_panel()
-                continue
-            elif inp.lower() == '/trace':
-                trace = agent.get_session_trace()
-                ui.show_trace(trace)
-                continue
-            elif inp.lower().startswith('/patti') or inp.lower().startswith('/pacts'):
-                if agent.pacts is None:
-                    ui.error("Pacts not available.")
-                else:
-                    show = getattr(ui, "show_report", None) or ui.show_trace
-                    show(agent.pacts.render_status())
-                continue
-            elif inp.lower().startswith('/specchio') or inp.lower().startswith('/mirror'):
-                from core.mirror import Mirror
-                show = getattr(ui, "show_report", None) or ui.show_trace
-                mirror = Mirror(MEMORY_DIR)
-                mirror.harvest()
-                show(mirror.render_status())
-                continue
-            elif inp.lower().startswith('/fucina') or inp.lower().startswith('/forge'):
-                if agent.forge is None:
-                    ui.error("Forge not available.")
-                else:
-                    show = getattr(ui, "show_report", None) or ui.show_trace
-                    show(agent.forge.render_status())
-                continue
-            elif inp.lower().startswith('/integrity'):
-                parts = inp.split()
-                if len(parts) > 1 and parts[1].lower() in ("refresh", "update", "baseline"):
-                    ui.status(f"[{agent.refresh_integrity_baseline()}]")
-                else:
-                    from core.security.integrity import IntegrityChecker
-                    show = getattr(ui, "show_report", None) or ui.show_trace
-                    show(IntegrityChecker(OPENVURP_DIR).verify().message
-                         + "\n\n/integrity refresh per rigenerare il baseline.")
-                continue
-            elif inp.lower().startswith('/mode'):
-                parts = inp.split()
-                if len(parts) == 1:
-                    ui.openvurp_say(
-                        f"Current mode: {agent.approval_mode}\n"
-                        "  /mode safe — normal approvals (default)\n"
-                        "  /mode auto — pre-approve non-critical actions\n"
-                        "  /mode plan — observe only: produces plans, does not execute"
-                    )
-                else:
-                    err = agent.set_approval_mode(parts[1])
-                    if err:
-                        ui.error(err)
-                    else:
-                        ui.status(f"[mode: {agent.approval_mode}]")
-                        ui._approval_mode = agent.approval_mode
-                continue
-            elif inp.lower() == '/evolve':
-                ui.show_evolve()
-                continue
-            elif inp.lower().startswith('/voice'):
-                parts = inp.split()
-                requested = parts[1].lower() if len(parts) > 1 else "toggle"
-                if requested in ("on", "1", "true", "yes", "si", "sì"):
-                    voice_enabled = True
-                elif requested in ("off", "0", "false", "no"):
-                    voice_enabled = False
-                else:
-                    voice_enabled = not voice_enabled
-                config.VOICE_ENABLED = voice_enabled
-                state = "on" if voice_enabled else "off"
-                ui.console.print(f"  [cyan]Voice {state}[/cyan]")
-                continue
-            elif inp.lower().startswith('/audio'):
-                parts = inp.split()
-                requested = parts[1].lower() if len(parts) > 1 else "toggle"
-                current = bool(getattr(config, "AUDIO_ENABLED", True))
-                if requested in ("on", "1", "true", "yes", "si", "sì"):
-                    enabled = True
-                elif requested in ("off", "0", "false", "no"):
-                    enabled = False
-                else:
-                    enabled = not current
-                config.AUDIO_ENABLED = enabled
-                config.AUDIO_TRANSCRIBE_ENABLED = enabled
-                state = "on" if enabled else "off"
-                ui.console.print(f"  [cyan]Audio and transcription {state}[/cyan]")
-                continue
-            elif inp.lower().startswith('/mic'):
-                # Input da microfono
-                parts = inp.split()
-                if len(parts) > 1 and parts[1].lower() in ("on", "off"):
-                    enabled = parts[1].lower() == "on"
-                    config.MIC_ENABLED = enabled
-                    state = "on" if enabled else "off"
-                    ui.console.print(f"  [cyan]Microphone {state}[/cyan]")
-                    continue
-                if not getattr(config, "MIC_ENABLED", False):
-                    ui.console.print("  [dim]Microphone off. Use /mic on or set MIC_ENABLED=1.[/dim]")
-                    continue
-                duration = float(parts[1]) if len(parts) > 1 else 5.0
-                try:
-                    from voice import listen_microphone
-                    text = listen_microphone(duration=duration)
-                    if text.strip():
-                        ui.console.print(f"  [dim]Hai detto: {text}[/dim]")
-                        inp = text  # Usa il testo trascritto come input
-                    else:
-                        ui.console.print("  [dim]Non ho sentito nulla.[/dim]")
-                        continue
-                except ImportError:
-                    ui.console.print("  [red]sounddevice non installato: pip install sounddevice[/red]")
-                    continue
-                except Exception as e:
-                    ui.console.print(f"  [red]Microphone error: {e}[/red]")
-                    continue
-            elif inp.lower().startswith('/update'):
-                from core import updater
-                if not updater.is_git_repo():
-                    ui.console.print("  [dim]update: non è un repository git.[/dim]")
-                    continue
-                ui.console.print("  [dim]update: checking for updates…[/dim]")
-                info = updater.check_for_updates(fetch=True)
-                if not info.get("available"):
-                    ui.console.print(f"  [dim]update: {info.get('summary', 'no updates')}.[/dim]")
-                    continue
-                ui.console.print(f"  [cyan]update: {info['summary']} ({info['local']} → {info['remote']}). Applico…[/cyan]")
-                result = updater.apply_update(smoke_test=True)
-                if result.get("ok") and result.get("updated"):
-                    ui.console.print(f"  [green]✓ {result['summary']}[/green] — restarting…")
-                    agent.save_session()
-                    updater.request_restart("auto-update")
-                    updater.restart_in_place()
-                elif result.get("rolled_back"):
-                    ui.console.print(f"  [yellow]⚠ update rolled back: {result.get('error','')}[/yellow]")
-                else:
-                    ui.console.print(f"  [yellow]⚠ update not applied: {result.get('error','')}[/yellow]")
-                continue
-            elif inp.lower().startswith('/dashboard'):
-                if dashboard is not None:
-                    ui.console.print(f"  [dim]dashboard already running at http://localhost:{getattr(config,'DASHBOARD_PORT',8420)}[/dim]")
-                else:
-                    dashboard = start_dashboard_background(
-                        agent, ui, port=int(getattr(config, "DASHBOARD_PORT", 8420)),
-                    )
-                continue
-            elif inp.lower() == '/restart':
-                ui.console.print("  [bold cyan]Restarting openvurp...[/bold cyan]")
-                agent.save_session()
-                # Se gira sotto watcher, la sentinella basta; altrimenti riavvio
-                # in place (stesso terminale) caricando il codice aggiornato.
-                from core import updater
-                updater.request_restart("Restart manuale da CLI (/restart)")
-                if os.environ.get("OPENVURP_UNDER_WATCHER"):
-                    ui.console.print("  [dim]Sentinel created — the watcher will restart openvurp.[/dim]")
-                    sys.exit(42)
-                ui.console.print("  [dim]Restarting in place…[/dim]")
-                updater.restart_in_place()
-
-            with _agent_lock:
-                agent.run(inp, source="cli", sender="user")
-                # Salva sessione dopo ogni turno — così il riavvio non perde nulla
-                agent.session.save()
-            # (il riavvio è gestito dal _restart_watcher in background)
-
-            # Se voce attiva, pronuncia l'ultima risposta
-            if voice_enabled:
-                try:
-                    from voice import speak
-                    # Prendi l'ultima risposta dall'agent
-                    last_msg = ""
-                    for m in reversed(agent.messages):
-                        if m.get("role") == "assistant" and m.get("content"):
-                            last_msg = m["content"]
-                            break
-                    if last_msg:
-                        # Pulisci markdown per la voce
-                        import re
-                        clean = re.sub(r'[*_`#\[\]()]', '', last_msg)
-                        clean = re.sub(r'\n{2,}', '. ', clean)
-                        if len(clean) > 1000:
-                            clean = clean[:1000] + "..."
-                        speak(clean, play=True)
-                except ImportError:
-                    ui.console.print("  [dim]edge-tts non installato: pip install edge-tts[/dim]")
-                    voice_enabled = False
-                except Exception as e:
-                    ui.console.print(f"  [dim]Voice error: {e}[/dim]")
-
-        except KeyboardInterrupt:
-            print()
-            agent.save_session()
-            agent.cleanup()
-            if heartbeat:
-                heartbeat.stop()
-            if sentinel:
-                sentinel.stop()
-            ui.goodbye()
-            break
-        except Exception as e:
-            ui.error(f"Error: {e}")
-            import traceback
-            traceback.print_exc()
-
 
 if __name__ == "__main__":
     main()
