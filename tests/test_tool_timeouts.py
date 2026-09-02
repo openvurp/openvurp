@@ -149,7 +149,7 @@ def _agent_stub():
 
 
 def test_identical_failure_is_blocked_after_the_limit(monkeypatch):
-    """Il caso reale: `anima_update` ripetuto contro un budget esaurito."""
+    """Il caso reale: `remember` ripetuto contro un budget esaurito."""
     import config as cfg
     monkeypatch.setattr(cfg, "TOOL_MAX_IDENTICAL_FAILURES", 3, raising=False)
 
@@ -157,10 +157,10 @@ def test_identical_failure_is_blocked_after_the_limit(monkeypatch):
     args = {"section": "voice", "text": "diretto"}
 
     for _ in range(3):
-        assert agent._loop_guard("anima_update", args) == ""
-        agent._note_call_outcome("anima_update", args, success=False)
+        assert agent._loop_guard("remember", args) == ""
+        agent._note_call_outcome("remember", args, success=False)
 
-    blocked = agent._loop_guard("anima_update", args)
+    blocked = agent._loop_guard("remember", args)
     assert "BLOCCATO DAL RUNTIME" in blocked
     assert "Smetti di chiamarlo" in blocked
 
@@ -168,8 +168,8 @@ def test_identical_failure_is_blocked_after_the_limit(monkeypatch):
 def test_different_arguments_are_not_blocked():
     agent = _agent_stub()
     for _ in range(5):
-        agent._note_call_outcome("anima_update", {"text": "a"}, success=False)
-    assert agent._loop_guard("anima_update", {"text": "b"}) == ""
+        agent._note_call_outcome("remember", {"text": "a"}, success=False)
+    assert agent._loop_guard("remember", {"text": "b"}) == ""
 
 
 def test_a_success_clears_the_counter():

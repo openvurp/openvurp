@@ -8,6 +8,7 @@ promossi in una lezione stabile.
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import os
@@ -71,14 +72,53 @@ class LearningReviewReport:
         return "\n".join(lines)
 
 
+# Chi sta imparando, in questo momento, su questo filo di esecuzione.
+#
+# Le lezioni erano di tutti: un unico archivio in memory/learning, scritto da
+# qualunque agente chiamasse learning_feedback. Cosi' una correzione data a chi
+# cerca offerte finiva nel bagaglio di chi scrive codice — e nessuna delle due
+# era piu' verificabile, perche' non si sapeva a chi appartenesse.
+#
+# Una variabile di contesto e non un attributo: gli agenti girano anche in
+# parallelo (broadcast usa un pool di thread), e un attributo condiviso
+# verrebbe sovrascritto dal collega che parte un istante dopo.
+_SCOPE: contextvars.ContextVar = contextvars.ContextVar("learning_scope", default="")
+
+
+def set_scope(scope: str):
+    """Da qui in avanti si impara per conto di questo agente."""
+    return _SCOPE.set(str(scope or ""))
+
+
+def reset_scope(token) -> None:
+    _SCOPE.reset(token)
+
+
+def current_scope() -> str:
+    return _SCOPE.get()
+
+
+def scoped_dir(memory_dir: str, name: str, scope: str = "") -> str:
+    """La cartella di un archivio, dell'agente o della piattaforma.
+
+    Senza scope resta dov'era (memory/<name>): la piattaforma non trasloca, e
+    quello che c'e' gia' sul disco continua a leggersi.
+    """
+    scope = str(scope or "").strip()
+    if not scope:
+        return os.path.join(memory_dir, name)
+    return os.path.join(memory_dir, "agents", scope, name)
+
+
 class LearningLoop:
     EVENTS_FILE = "events.jsonl"
     CANDIDATES_FILE = "candidates.json"
 
-    def __init__(self, memory_dir: str):
+    def __init__(self, memory_dir: str, scope: str = ""):
         self.memory_dir = memory_dir
-        self.learning_dir = os.path.join(memory_dir, "learning")
-        self.lessons_dir = os.path.join(memory_dir, "lessons")
+        self.scope = str(scope or "")
+        self.learning_dir = scoped_dir(memory_dir, "learning", self.scope)
+        self.lessons_dir = scoped_dir(memory_dir, "lessons", self.scope)
         os.makedirs(self.learning_dir, exist_ok=True)
         os.makedirs(self.lessons_dir, exist_ok=True)
         os.makedirs(self.memory_dir, exist_ok=True)
@@ -331,15 +371,6 @@ class LearningLoop:
             source=source,
             metadata={"candidate_id": candidate_id, "verified": ok},
         )
-        try:
-            from core.growth import record_growth_event
-            record_growth_event(
-                self.memory_dir, "lesson_promoted",
-                f"{topic} ({'verificata' if ok else 'forzata'})",
-                meta={"file": os.path.basename(path)},
-            )
-        except Exception:
-            pass
         verdict = "verificata e promossa" if ok else "promossa con force (verifica fallita)"
         return f"[OK] Lezione {verdict} in {path}"
 
@@ -376,12 +407,6 @@ class LearningLoop:
             actor=actor,
             source=source,
         )
-        try:
-            from core.growth import record_growth_event
-            record_growth_event(self.memory_dir, "lesson_rolled_back",
-                                f"{filename}: {reason or 'non specificato'}")
-        except Exception:
-            pass
         return f"[OK] Lezione ritirata in lessons/.retired/{filename}"
 
     def record_task_completion(self, goal: str, tools_used: list[str],

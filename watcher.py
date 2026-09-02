@@ -4,7 +4,6 @@ openvurp Watcher — Auto-restart supervisor.
 
 Avvia main.py come sottoprocesso e lo riavvia quando:
 1. File .py vengono modificati (evolve_self, aggiornamenti manuali)
-2. File workspace .md vengono modificati (IDENTITY.md, AGENTS.md, etc.)
 3. Il file sentinella memory/.restart viene creato (restart esplicito)
 4. Il processo crasha
 
@@ -46,12 +45,6 @@ IGNORE_PATTERNS = {
     "logs/",
 }
 
-# File .md del workspace — riletti ogni turno, non serve riavviare
-WORKSPACE_MD_FILES = {
-    "SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md",
-    "TOOLS.md", "MEMORY.md", "HEARTBEAT.md",
-}
-
 # Tempo minimo tra riavvii (evita loop infiniti)
 MIN_RESTART_INTERVAL = 5  # secondi
 # Intervallo di polling per modifiche
@@ -65,10 +58,6 @@ def should_ignore(filepath: str) -> bool:
     for pattern in IGNORE_PATTERNS:
         if pattern in filepath:
             return True
-    # I file .md del workspace vengono riletti ogni turno — no restart
-    basename = os.path.basename(filepath)
-    if basename in WORKSPACE_MD_FILES:
-        return True
     return False
 
 

@@ -52,34 +52,56 @@ def _msg(testo, **kw):
 
 # ── il canale non fa il lavoro: lo fa fare a chi lo fa per il web ────────
 
-def test_a_plain_message_goes_through_the_same_chat_function(canale):
+def test_a_message_with_no_addressee_asks_to_whom(canale):
+    """openvurp is the platform, not somebody who answers in their place.
+
+    There used to be a host thread here: anything unaddressed went to openvurp
+    itself, which had a soul file and a voice. It does not any more, so an
+    unaddressed message has nowhere to land — and the honest answer is the
+    question, with the list of who could take it.
+    """
     conv, fn, _ = canale
     risposte = conv.handle(_msg("che tempo fa?"))
-    assert len(fn.calls) == 1, "il canale ha risposto per conto suo"
+    assert not fn.calls, "it answered as if somebody owned the question"
+    assert "@amanda" in risposte[0].text and "@ciccio" in risposte[0].text
+
+
+def test_with_one_agent_it_does_not_ask_who(canale):
+    """Asking "to whom?" when there is one person is pedantry, not rigour."""
+    store = ChatStore(tempfile.mkdtemp())
+    store.create_agent("amanda", "offerte amazon", "", "", "")
+    fn = _ChatFn()
+    conv = ChannelConversation(fn, store)
+
+    risposte = conv.handle(_msg("che tempo fa?"))
+    assert len(fn.calls) == 1, "it asked who, with nobody else to choose"
     assert fn.calls[0]["message"] == "che tempo fa?"
     assert [r.text for r in risposte] == ["risposta a che tempo fa?"]
 
 
-def test_the_same_person_keeps_the_same_conversation(canale):
+def test_the_channel_does_not_do_the_work_itself(canale):
+    """The point of the whole file: the channel calls the SAME function the
+    web page calls, and adds nothing of its own."""
     conv, fn, store = canale
+    conv.handle(_msg("@amanda"))
     conv.handle(_msg("primo"))
     conv.handle(_msg("secondo"))
+    assert len(fn.calls) == 2
     assert fn.calls[0]["chat_id"] == fn.calls[1]["chat_id"], "ogni messaggio apriva una chat nuova"
 
 
-def test_the_chat_says_where_it_came_from(canale):
-    """Dalla pagina web devi vedere che quella chat arriva da Telegram e da chi."""
-    conv, _, store = canale
-    conv.handle(_msg("ciao"))
-    titoli = [c["title"] for c in store.list_chats()]
-    assert "Telegram · mario" in titoli, titoli
+def test_the_phone_writes_into_the_agents_own_conversation(canale):
+    """One conversation per agent, many doors.
 
-
-def test_two_people_do_not_share_a_conversation(canale):
-    conv, fn, _ = canale
-    conv.handle(_msg("io"))
-    conv.handle(_msg("io", peer_id="99", sender="lucia"))
-    assert fn.calls[0]["chat_id"] != fn.calls[1]["chat_id"]
+    Before, a message from Telegram opened a thread of its own titled
+    "Telegram · mario". Now it lands in the same chat you read on the page:
+    what you asked from the sofa is there on the screen, in one thread.
+    """
+    conv, fn, store = canale
+    conv.handle(_msg("@amanda mi trovi un SSD?"))
+    amanda = next(a["id"] for a in store.list_agents() if a["name"] == "amanda")
+    assert fn.calls[0]["chat_id"] == store.direct_chat_for_agent(amanda)["id"]
+    assert "Telegram · mario" not in [c["title"] for c in store.list_chats()]
 
 
 # ── la grammatica: in chat non c'e' una barra laterale ───────────────────
@@ -167,12 +189,14 @@ def test_every_voice_of_the_room_comes_back_not_just_the_last():
 
 def test_silence_is_not_sent_as_a_message(canale):
     conv, _, _ = canale
+    conv.handle(_msg("@amanda"))
     conv.chat_fn = _ChatFn(out=lambda t, c: {"chat_id": c, "reply": "(no reply)"})
     assert conv.handle(_msg("ciao")) == []
 
 
 def test_a_broken_turn_answers_instead_of_going_silent(canale):
     conv, _, _ = canale
+    conv.handle(_msg("@amanda"))
 
     def esplode(_t, _c):
         raise RuntimeError("backend giu'")
@@ -183,7 +207,9 @@ def test_a_broken_turn_answers_instead_of_going_silent(canale):
 
 
 def test_attachments_are_carried_through(canale):
+    """A photo sent to the agent you are talking to must reach it."""
     conv, fn, _ = canale
+    conv.handle(_msg("@amanda"))
     conv.handle(_msg("guarda questa", attachments=["/tmp/foto.jpg"]))
     assert fn.calls[0]["attachments"] == ["/tmp/foto.jpg"]
 
@@ -215,13 +241,17 @@ def test_touching_a_name_keeps_the_conversation_with_that_agent(canale):
     assert fn.calls[0]["message"] == "quanto costa?"
 
 
-def test_you_can_go_back_to_openvurp(canale):
+def test_leaving_a_conversation_offers_the_others(canale):
+    """`/me` used to mean "back to talking to openvurp". There is nobody there
+    to go back to, so it closes what you had open and shows who else there is.
+    """
     conv, fn, store = canale
     conv.handle(_msg("@amanda"))
-    conv.handle(_msg("/me"))
+    uscita = conv.handle(_msg("/me"))[0].text
+    assert "@ciccio" in uscita
+
     conv.handle(_msg("una cosa mia"))
-    titoli = {c["id"]: c["title"] for c in store.list_chats()}
-    assert titoli[fn.calls[-1]["chat_id"]] == "Telegram · mario"
+    assert not fn.calls, "after leaving, an unaddressed message still went somewhere"
 
 
 def test_choosing_someone_who_is_gone_falls_back_instead_of_swallowing(canale):
@@ -235,12 +265,12 @@ def test_choosing_someone_who_is_gone_falls_back_instead_of_swallowing(canale):
 
 
 def test_the_selection_is_per_person_not_global(canale):
+    """Mario picking amanda must not put Lucia's messages into that chat."""
     conv, fn, store = canale
     conv.handle(_msg("@amanda"))
-    conv.handle(_msg("qualcosa", peer_id="99", sender="lucia"))
-    titoli = {c["id"]: c["title"] for c in store.list_chats()}
-    assert titoli[fn.calls[-1]["chat_id"]] == "Telegram · lucia", \
-        "la scelta di uno ha dirottato i messaggi di un altro"
+    risposte = conv.handle(_msg("qualcosa", peer_id="99", sender="lucia"))
+    assert not fn.calls, "la scelta di uno ha dirottato i messaggi di un altro"
+    assert "@amanda" in risposte[0].text, "Lucia was not asked who she wants"
 
 
 def test_an_unknown_name_still_answers_with_the_roster(canale):

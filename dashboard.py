@@ -469,8 +469,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return self.wfile.write(svg)
         if path == "/octopus.png":
             return self._serve_file("dashboard/octopus.png", "image/png")
-        if path in {"/openvurp.jpg", "/logo"}:
-            return self._serve_logo()
 
         if not self._authed():
             if path in {"/", "/index.html"}:
@@ -1274,18 +1272,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 body = f.read()
             self.send_response(200)
             self.send_header("Content-Type", ctype)
-            self.send_header("Cache-Control", "max-age=86400")
-            self.end_headers()
-            self.wfile.write(body)
-        except Exception:
-            self.send_error(404)
-
-    def _serve_logo(self):
-        try:
-            with open(os.path.join(self.workspace_dir, "openvurp.jpg"), "rb") as f:
-                body = f.read()
-            self.send_response(200)
-            self.send_header("Content-Type", "image/jpeg")
             self.send_header("Cache-Control", "max-age=86400")
             self.end_headers()
             self.wfile.write(body)

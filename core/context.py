@@ -17,7 +17,6 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from core.bootstrap import resolve_workspace_file
 
 # ── Costanti a livelli ──
 
@@ -218,11 +217,6 @@ class ContextManager:
         if os.path.exists(self.skills_dir):
             for f in sorted(glob_mod.glob(os.path.join(self.skills_dir, "*.md"))):
                 self._skills_cache.append(Skill.from_file(f))
-
-    def _load_workspace_file(self, filename: str) -> str:
-        """Carica un file workspace (SOUL.md, AGENTS.md, etc.)."""
-        _, path = resolve_workspace_file(self.openvurp_dir, filename)
-        return load_file(path)
 
     # ── System Prompt — Approccio a livelli ──
     #

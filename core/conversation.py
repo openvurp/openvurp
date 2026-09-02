@@ -31,7 +31,7 @@ HELP = """What you can do:
   /agents            who is in the roster
   /all message       ask everyone at once, in the room
   /stop              stop the discussion in progress
-  /me                go back to talking to openvurp
+  /me                leave this conversation and choose another
   /help              this message"""
 
 
@@ -73,19 +73,6 @@ class ChannelConversation:
 
     # ── where a channel lands in the roster ──────────────────────────────
 
-    def chat_for(self, msg: Incoming) -> dict:
-        """This correspondent's conversation, stable over time.
-
-        A recognisable title matters: from the web page you must be able to see
-        that the chat comes from Telegram and from whom, otherwise the channel
-        becomes a separate place you never look at again.
-        """
-        title = f"{msg.channel.capitalize()} · {msg.sender or msg.peer_id}"
-        for chat in self.store.list_chats():
-            if chat.get("title") == title:
-                return chat
-        return self.store.create_chat(title=title, mode="solo")
-
     # ── the grammar, the same on every channel ───────────────────────────
 
     def handle(self, msg: Incoming) -> list[Reply]:
@@ -105,8 +92,11 @@ class ChannelConversation:
         if low in {"/stop", "/basta", "/ferma"}:
             return [Reply(self.stop_room())]
         if low in {"/me", "/io", "/openvurp", "/exit", "/esci"}:
+            # There is nobody behind openvurp to go back to: it is the place
+            # the agents live in, not one of them. Leaving a conversation
+            # means choosing another one.
             self._open.pop(msg.actor_id, None)
-            return [Reply("Fine — you're writing to me again.")]
+            return [Reply("Closed. Pick who to write to:\n\n" + self.roster())]
 
         # "@amanda" on its own is not an empty message: it means "from now on
         # I'm talking to her". It is what happens when you tap a name on the
@@ -140,8 +130,17 @@ class ChannelConversation:
                 return self._run(chat["id"], text, msg)
             self._open.pop(msg.actor_id, None)   # deleted in the meantime
 
-        chat = self.chat_for(msg)
-        return self._run(chat["id"], text, msg)
+        # Nothing addressed and nobody picked. There is no host to fall back
+        # on — openvurp is where the agents are kept, not somebody who answers
+        # in their place. So the answer is the question: to whom?
+        rows = self.store.agent_roster()
+        if len(rows) == 1:
+            # With one agent, asking "to whom?" would be pedantry.
+            self._open[msg.actor_id] = rows[0]["id"]
+            chat = self.store.direct_chat_for_agent(rows[0]["id"])
+            if chat is not None:
+                return self._run(chat["id"], text, msg)
+        return [Reply(self.roster())]
 
     # ── the actions ──────────────────────────────────────────────────────
 

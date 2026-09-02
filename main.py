@@ -147,15 +147,6 @@ def render_command(text, agent, openvurp_dir, memory_dir):
         return default
 
     try:
-        if t.startswith("/anima"):
-            return agent.anima.render_status() if getattr(agent, "anima", None) else "Anima not available."
-        if t.startswith("/growth"):
-            from core.growth import build_growth_report
-            return build_growth_report(memory_dir, days=max(1, min(_num(7), 365)),
-                                       memory_manager=getattr(agent, "memory", None)).render()
-        if t.startswith("/diary") or t.startswith("/diario"):
-            from core.diary import render_diary
-            return render_diary(memory_dir, limit=max(1, min(_num(7), 60)))
         if t.startswith("/patti") or t.startswith("/pacts"):
             return agent.pacts.render_status() if getattr(agent, "pacts", None) else "Pacts not available."
         if t.startswith("/specchio") or t.startswith("/mirror"):
@@ -163,16 +154,8 @@ def render_command(text, agent, openvurp_dir, memory_dir):
             m = Mirror(memory_dir)
             m.harvest()
             return m.render_status()
-        if t.startswith("/fili") or t.startswith("/legame"):
-            return agent.bonds.render_status() if getattr(agent, "bonds", None) else "Bond not available."
-        if t.startswith("/sensi") or t.startswith("/senses"):
-            return agent.senses.render_status() if getattr(agent, "senses", None) else "Senses not available."
-        if t.startswith("/progetti") or t.startswith("/projects"):
-            return agent.projects.render_status() if getattr(agent, "projects", None) else "Projects not available."
         if t.startswith("/fucina") or t.startswith("/forge"):
             return agent.forge.render_status() if getattr(agent, "forge", None) else "Forge not available."
-        if t.startswith("/curiosita") or t.startswith("/curiosity"):
-            return agent.curiosity.render_status() if getattr(agent, "curiosity", None) else "Curiosity not available."
         if t.startswith("/swarm") or (text or "").startswith("@"):
             return render_swarm_command(text, agent)
         if t.startswith("/integrity"):
@@ -211,28 +194,6 @@ def check_restarted(openvurp_dir: str) -> str:
         return reason or "restart"
     except OSError:
         return ""
-
-
-def read_identity_name(openvurp_dir: str, load_file_fn) -> str:
-    """Estrae il nome agente da IDENTITY.md se presente."""
-    identity_path = os.path.join(openvurp_dir, "IDENTITY.md")
-    if not os.path.exists(identity_path):
-        return ""
-
-    try:
-        content = load_file_fn(identity_path)
-    except Exception:
-        return ""
-
-    markers = ("- **Nome:**", "- **Name:**")
-    for raw_line in content.splitlines():
-        line = raw_line.strip()
-        for marker in markers:
-            if not line.lower().startswith(marker.lower()):
-                continue
-            value = line[len(marker):].strip()
-            return value
-    return ""
 
 
 def _status_icon(msg: str) -> str:
@@ -391,9 +352,9 @@ def start_heartbeat_background(agent, ui):
     heartbeat.set_agent_callback(run_agent_for_heartbeat)
     heartbeat.set_send_callback(send_heartbeat_message)
     heartbeat.set_event_callback(on_heartbeat_event)
-    # Il dreaming notturno indicizza anche nella memoria semantica
+    # Il ciclo notturno indicizza anche nella memoria semantica
     heartbeat.memory_manager = agent.memory
-    # Il ciclo notturno completo (sogni, diario, specchio) usa l'LLM dell'agente
+    # Il ciclo notturno (sbiadire i ricordi, specchio) usa l'LLM dell'agente
     heartbeat.agent_ref = agent
 
     heartbeat.start()
@@ -840,8 +801,6 @@ CLI_HELP = """
    [cyan]/swarm discuss[/cyan] <tema>     falli discutere fra loro
 
   [bold]Vita interiore[/bold]
-   [cyan]/anima[/cyan] [cyan]/diario[/cyan] [cyan]/patti[/cyan] [cyan]/specchio[/cyan] [cyan]/fili[/cyan] [cyan]/sensi[/cyan]
-   [cyan]/progetti[/cyan] [cyan]/fucina[/cyan] [cyan]/curiosita[/cyan] [cyan]/growth[/cyan] [cyan]/evolve[/cyan]
 
   [bold]Sistema[/bold]
    [cyan]/voice[/cyan] [cyan]/audio[/cyan] [cyan]/mic[/cyan] [cyan]/dashboard[/cyan] [cyan]/integrity[/cyan] [cyan]/update[/cyan] [cyan]/restart[/cyan] [cyan]/exit[/cyan]
@@ -1270,70 +1229,26 @@ def main():
                 trace = agent.get_session_trace()
                 ui.show_trace(trace)
                 continue
-            elif inp.lower().startswith('/anima'):
-                if agent.anima is None:
-                    ui.error("Anima not available.")
-                else:
-                    show = getattr(ui, "show_growth", None) or ui.show_trace
-                    show(agent.anima.render_status())
-                continue
-            elif inp.lower().startswith('/diary') or inp.lower().startswith('/diario'):
-                from core.diary import render_diary
-                parts = inp.split()
-                limit = 7
-                if len(parts) > 1 and parts[1].isdigit():
-                    limit = max(1, min(int(parts[1]), 60))
-                show = getattr(ui, "show_growth", None) or ui.show_trace
-                show(render_diary(MEMORY_DIR, limit=limit))
-                continue
             elif inp.lower().startswith('/patti') or inp.lower().startswith('/pacts'):
                 if agent.pacts is None:
                     ui.error("Pacts not available.")
                 else:
-                    show = getattr(ui, "show_growth", None) or ui.show_trace
+                    show = getattr(ui, "show_report", None) or ui.show_trace
                     show(agent.pacts.render_status())
                 continue
             elif inp.lower().startswith('/specchio') or inp.lower().startswith('/mirror'):
                 from core.mirror import Mirror
-                show = getattr(ui, "show_growth", None) or ui.show_trace
+                show = getattr(ui, "show_report", None) or ui.show_trace
                 mirror = Mirror(MEMORY_DIR)
                 mirror.harvest()
                 show(mirror.render_status())
-                continue
-            elif inp.lower().startswith('/fili') or inp.lower().startswith('/legame'):
-                if agent.bonds is None:
-                    ui.error("Bond not available.")
-                else:
-                    show = getattr(ui, "show_growth", None) or ui.show_trace
-                    show(agent.bonds.render_status())
-                continue
-            elif inp.lower().startswith('/sensi') or inp.lower().startswith('/senses'):
-                if agent.senses is None:
-                    ui.error("Senses not available.")
-                else:
-                    show = getattr(ui, "show_growth", None) or ui.show_trace
-                    show(agent.senses.render_status())
-                continue
-            elif inp.lower().startswith('/progetti') or inp.lower().startswith('/projects'):
-                if agent.projects is None:
-                    ui.error("Projects not available.")
-                else:
-                    show = getattr(ui, "show_growth", None) or ui.show_trace
-                    show(agent.projects.render_status())
                 continue
             elif inp.lower().startswith('/fucina') or inp.lower().startswith('/forge'):
                 if agent.forge is None:
                     ui.error("Forge not available.")
                 else:
-                    show = getattr(ui, "show_growth", None) or ui.show_trace
+                    show = getattr(ui, "show_report", None) or ui.show_trace
                     show(agent.forge.render_status())
-                continue
-            elif inp.lower().startswith('/curiosita') or inp.lower().startswith('/curiosity'):
-                if agent.curiosity is None:
-                    ui.error("Curiosity not available.")
-                else:
-                    show = getattr(ui, "show_growth", None) or ui.show_trace
-                    show(agent.curiosity.render_status())
                 continue
             elif inp.lower().startswith('/integrity'):
                 parts = inp.split()
@@ -1341,7 +1256,7 @@ def main():
                     ui.status(f"[{agent.refresh_integrity_baseline()}]")
                 else:
                     from core.security.integrity import IntegrityChecker
-                    show = getattr(ui, "show_growth", None) or ui.show_trace
+                    show = getattr(ui, "show_report", None) or ui.show_trace
                     show(IntegrityChecker(OPENVURP_DIR).verify().message
                          + "\n\n/integrity refresh per rigenerare il baseline.")
                 continue
@@ -1361,18 +1276,6 @@ def main():
                     else:
                         ui.status(f"[mode: {agent.approval_mode}]")
                         ui._approval_mode = agent.approval_mode
-                continue
-            elif inp.lower().startswith('/growth'):
-                from core.growth import build_growth_report
-                parts = inp.split()
-                days = 7
-                if len(parts) > 1 and parts[1].isdigit():
-                    days = max(1, min(int(parts[1]), 365))
-                report = build_growth_report(
-                    MEMORY_DIR, days=days, memory_manager=agent.memory,
-                )
-                show = getattr(ui, "show_growth", None) or ui.show_trace
-                show(report.render())
                 continue
             elif inp.lower() == '/evolve':
                 ui.show_evolve()

@@ -13,7 +13,6 @@ import threading
 import shutil
 from datetime import datetime
 
-from core.bootstrap import resolve_workspace_file
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -51,16 +50,11 @@ GLYPH = "\u2733"  # ✳
 # Slash command → short help. Drives the popup menu + autocomplete in the box.
 SLASH_COMMAND_HELP = {
     "mode": "approval mode: safe | auto | plan",
-    "anima": "traits the agent has grown",
-    "growth": "growth report (lessons, mirror, dreams)",
     "progetti": "long-term projects",
     "fucina": "the forge: tools it built for itself",
     "sensi": "what the agent is watching",
-    "fili": "bonds / follow-ups",
-    "diary": "the agent's diary",
     "specchio": "mirror: corrections no longer repeated",
     "patti": "active pacts",
-    "curiosita": "open questions it wants to study",
     "memory": "memory files",
     "skills": "available skills",
     "dashboard": "start web dashboard (chat in browser)",
@@ -555,11 +549,8 @@ class UI:
     def show_self_panel(self):
         content = Text()
         # Core modules
-        for f in ['SOUL.md', 'config.py', 'agent.py', 'main.py']:
-            if f.endswith('.md'):
-                _, path = resolve_workspace_file(OPENVURP_DIR, f)
-            else:
-                path = os.path.join(OPENVURP_DIR, f)
+        for f in ['config.py', 'agent.py', 'main.py']:
+            path = os.path.join(OPENVURP_DIR, f)
             if os.path.exists(path):
                 size = os.path.getsize(path)
                 lines = load_file(path).count('\n')
@@ -611,12 +602,12 @@ class UI:
         ))
         self.console.print()
 
-    def show_growth(self, report_text: str):
+    def show_report(self, report_text: str):
         """Diario di crescita: quanto l'agente è cresciuto con l'owner."""
         self.console.print()
         self.console.print(Panel(
             Text(report_text, style="white"),
-            title=f"[bold]{GLYPH} Growth[/bold]", title_align="left",
+            title=f"[bold]{GLYPH} Report[/bold]", title_align="left",
             border_style=ACCENT, box=box.ROUNDED, padding=(0, 1),
         ))
         self.console.print()

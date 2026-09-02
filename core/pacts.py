@@ -3,8 +3,8 @@ openvurp Core — Patti
 
 Accordi espliciti tra owner e agente, applicati dal runtime.
 
-Un boundary nell'Anima è testo nel prompt: il modello *dovrebbe*
-rispettarlo. Un patto è diverso: negoziato in conversazione, registrato
+Un limite scritto nel prompt il modello *dovrebbe* rispettarlo.
+Un patto è diverso: negoziato in conversazione, registrato
 con data e motivo, e fatto rispettare da `_execute_tool` anche se il
 modello ha un giorno storto. Le promesse si mantengono per costruzione.
 
@@ -128,7 +128,6 @@ class Pacts:
             raise PactError("Questo patto esiste già.")
         self._pacts.append(pact)
         self._save()
-        self._record_growth(f"patto stretto [{pact.pact_type}]: {description[:80]}")
         return pact
 
     def retire(self, pact_id: str, reason: str = "") -> Pact:
@@ -142,15 +141,7 @@ class Pacts:
             "reason": (reason or "")[:200],
         })
         self._save()
-        self._record_growth(f"patto sciolto: {pact.description[:80]}")
         return pact
-
-    def _record_growth(self, detail: str):
-        try:
-            from core.growth import record_growth_event
-            record_growth_event(self.memory_dir, "pact", detail)
-        except Exception:
-            pass
 
     # ── Enforcement (chiamato da _execute_tool) ──
 

@@ -15,7 +15,14 @@ MEMORY_DIR = os.path.join(OPENVURP_DIR, "memory")
 
 
 def _learning() -> LearningLoop:
-    return LearningLoop(MEMORY_DIR)
+    """L'archivio di chi sta chiamando, non quello di tutti.
+
+    Prima era uno solo: qualunque agente chiamasse learning_feedback scriveva
+    nello stesso mucchio. Lo scope lo mette lo sciame prima di eseguire il
+    tool; senza scope si ricade sulla piattaforma, che e' il caso del terminale.
+    """
+    from core.learning import current_scope
+    return LearningLoop(MEMORY_DIR, scope=current_scope())
 
 
 def learning_feedback_handler(topic: str = "", feedback: str = "",

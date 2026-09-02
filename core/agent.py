@@ -34,11 +34,7 @@ from core.subagent import SubagentManager
 from core.plugins import PluginManager
 from core.personality import enhance_system_prompt, parse_response_directive, soften_reasoning, describe_venue
 from core.doctor import build_doctor_report, fix_runtime_issues
-from core.bootstrap import (
-    BootstrapLoader,
-    normalize_workspace_filename,
-    resolve_session_type,
-)
+from core.bootstrap import resolve_session_type
 from core.environment import EnvironmentInspector, render_environment_prompt
 from core.method import build_operating_method
 from core.capabilities import inspect_runtime_capabilities, render_capability_prompt
@@ -67,7 +63,6 @@ from tools.media import IMAGE_TOOL, AUDIO_TRANSCRIBE_TOOL, PDF_TOOL
 from tools.desktop import DESKTOP_SCREENSHOT_TOOL
 from tools.browser import BROWSER_TOOL
 from tools.browser_setup import BROWSER_SETUP_TOOL
-from tools.dreaming import MEMORY_CONSOLIDATE_TOOL
 from tools.learning import (
     LEARNING_FEEDBACK_TOOL,
     LEARNING_REVIEW_TOOL,
@@ -82,7 +77,6 @@ from tools.journal import (
 from tools.plugins import SCAFFOLD_PLUGIN_TOOL
 
 # Self-evolution tools
-from tools.evolve import EVOLVE_SELF_TOOL, READ_SELF_TOOL
 
 # Voice tools (opzionale)
 try:
@@ -131,7 +125,7 @@ class Agent:
         "read_file", "grep", "glob", "web_fetch", "web_search",
         "image_analyze", "pdf_read", "audio_transcribe",
         "process_list", "process_sessions", "process_read",
-        "doctor", "list_plugins", "load_skill", "read_self",
+        "doctor", "list_plugins", "load_skill",
         "learning_review", "task_journal", "agent_state",
         "desktop_screenshot", "browser",
     }
@@ -208,14 +202,6 @@ class Agent:
         # Cleanup automatico all'avvio
         try:
             self.memory.cleanup()
-        except Exception:
-            pass
-
-        # Atto di nascita: dopo un reset il file sparisce e la prima
-        # esecuzione successiva registra una nuova nascita.
-        try:
-            from core.growth import ensure_birth
-            ensure_birth(MEMORY_DIR)
         except Exception:
             pass
 
@@ -300,17 +286,7 @@ class Agent:
         except Exception:
             pass
 
-        # Bootstrap loader — rilegge file workspace da disco ogni turno
-        self.bootstrap = BootstrapLoader(OPENVURP_DIR)
         self.environment = EnvironmentInspector(OPENVURP_DIR)
-
-        # Anima: identità strutturata e versionata. Quando ha tratti attivi
-        # sostituisce SOUL.md/IDENTITY.md/USER.md nel prompt.
-        try:
-            from core.anima import Anima
-            self.anima = Anima(OPENVURP_DIR)
-        except Exception:
-            self.anima = None
 
         # Patti: accordi owner-agente applicati dal runtime
         try:
@@ -319,20 +295,6 @@ class Agent:
         except Exception:
             self.pacts = None
 
-        # Curiosità: domande aperte studiate nei cicli morti
-        try:
-            from core.curiosity import Curiosity
-            self.curiosity = Curiosity(MEMORY_DIR)
-        except Exception:
-            self.curiosity = None
-
-        # Progetti: obiettivi a lungo termine, un prossimo passo alla volta
-        try:
-            from core.projects import Projects
-            self.projects = Projects(MEMORY_DIR)
-        except Exception:
-            self.projects = None
-
         # Fucina: auto-estensione delle capacità (plugin forgiati e testati)
         try:
             from core.forge import Forge
@@ -340,26 +302,12 @@ class Agent:
         except Exception:
             self.forge = None
 
-        # Sensi: percezione continua del mondo dell'owner
-        try:
-            from core.senses import Senses
-            self.senses = Senses(MEMORY_DIR)
-        except Exception:
-            self.senses = None
-
         # Presenza: dove si trova l'owner adesso (per l'iniziativa)
         try:
             from core.presence import Presence
             self.presence = Presence(MEMORY_DIR)
         except Exception:
             self.presence = None
-
-        # Legame: fili da richiedere, silenzio, ritmo dei messaggi spontanei
-        try:
-            from core.bonds import Bonds
-            self.bonds = Bonds(MEMORY_DIR)
-        except Exception:
-            self.bonds = None
 
         # vurpub: il bancone condiviso (registry privato di skill/soluzioni).
         # Registra i tool QUI, dopo che self.tools esiste e self.vurpub è pronto
@@ -643,7 +591,7 @@ class Agent:
             PROCESS_KILL_TOOL,
             IMAGE_TOOL, PDF_TOOL,
             DESKTOP_SCREENSHOT_TOOL, BROWSER_TOOL, BROWSER_SETUP_TOOL,
-            MEMORY_CONSOLIDATE_TOOL, LEARNING_FEEDBACK_TOOL,
+            LEARNING_FEEDBACK_TOOL,
             LEARNING_REVIEW_TOOL, LEARNING_PROMOTE_TOOL,
             LEARNING_ROLLBACK_TOOL,
             TASK_JOURNAL_TOOL, REFLECTION_NOTE_TOOL, OPEN_LOOP_TOOL,
@@ -678,58 +626,6 @@ class Agent:
             handler=self._pact_handler,
         ))
         self.tools.register(Tool(
-            name="curiosity",
-            description=(
-                "La tua lista di domande aperte: cose che hai notato di non "
-                "sapere sul mondo dell'owner e che varrebbe la pena studiare. "
-                "Aggiungi domande quando emergono in conversazione (add); nei "
-                "cicli autonomi studiane una e chiudila (answer) salvando cosa "
-                "hai imparato. Azioni: add, answer, drop, list."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "action": {"type": "string", "description": "add | answer | drop | list"},
-                    "question": {"type": "string", "description": "La domanda (per add)."},
-                    "why": {"type": "string", "description": "Perché vale la pena saperlo (per add)."},
-                    "question_id": {"type": "string", "description": "ID della domanda (per answer/drop)."},
-                    "summary": {"type": "string", "description": "Cosa hai imparato (per answer)."},
-                },
-                "required": ["action"],
-            },
-            handler=self._curiosity_handler,
-        ))
-        self.tools.register(Tool(
-            name="project",
-            description=(
-                "I tuoi progetti a lungo termine: obiettivi concordati con "
-                "l'owner che durano settimane e sopravvivono ai riavvii. Ogni "
-                "progetto ha UN prossimo passo concreto. Quando l'owner concorda "
-                "un obiettivo grande, registralo (create); quando lavori e fai "
-                "progressi, annotali (note) e aggiorna il prossimo passo; nei "
-                "cicli autonomi avanza il prossimo passo di un progetto fermo. "
-                "Azioni: create, note, set_next, milestone_add, milestone_done, "
-                "pause, resume, complete, drop, list."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "action": {"type": "string", "description": "create | note | set_next | milestone_add | milestone_done | pause | resume | complete | drop | list"},
-                    "title": {"type": "string", "description": "Titolo del progetto (per create)."},
-                    "goal": {"type": "string", "description": "Per create: come si capisce che è finito (criterio concreto)."},
-                    "why": {"type": "string", "description": "Perché conta per l'owner (per create)."},
-                    "next_step": {"type": "string", "description": "Il prossimo passo concreto (per create/note/set_next)."},
-                    "target_date": {"type": "string", "description": "Scadenza ISO opzionale, es. 2026-07-15 (per create)."},
-                    "project_id": {"type": "string", "description": "ID del progetto (per tutte le azioni tranne create/list)."},
-                    "note": {"type": "string", "description": "Cosa è stato fatto (per note) o esito (per complete)."},
-                    "milestone": {"type": "string", "description": "Titolo milestone (milestone_add) o indice/titolo (milestone_done)."},
-                    "reason": {"type": "string", "description": "Motivo (per pause/drop)."},
-                },
-                "required": ["action"],
-            },
-            handler=self._project_handler,
-        ))
-        self.tools.register(Tool(
             name="forge",
             description=(
                 "La fucina: quando ti manca una capacità (un tool che non hai), "
@@ -754,31 +650,6 @@ class Agent:
                 "required": ["action"],
             },
             handler=self._forge_handler,
-        ))
-        self.tools.register(Tool(
-            name="sense",
-            description=(
-                "I tuoi sensi: sorgenti che osservi da solo tra un heartbeat e "
-                "l'altro (cartelle, file, pagine web, feed RSS). Quando l'owner "
-                "dice 'tieni d'occhio X' o noti una sorgente che vale la pena "
-                "seguire per i suoi progetti, apri un senso (add). Le novità ti "
-                "arrivano nei cicli autonomi: collegale ai progetti/curiosità e, "
-                "se gli interessano davvero, scrivigli tu. "
-                "Azioni: add, remove, list."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "action": {"type": "string", "description": "add | remove | list"},
-                    "kind": {"type": "string", "description": "folder | file | url | rss (per add)."},
-                    "target": {"type": "string", "description": "Path della cartella/file o URL (per add)."},
-                    "label": {"type": "string", "description": "Etichetta parlante, es. 'cartella Tesi' (per add)."},
-                    "why": {"type": "string", "description": "Cosa interessa all'owner di questa sorgente (per add)."},
-                    "sense_id": {"type": "string", "description": "ID del senso (per remove)."},
-                },
-                "required": ["action"],
-            },
-            handler=self._sense_handler,
         ))
         # Only offered when there is actually a second model to ask. Before,
         # the tool was always in the box and always failed with "configure
@@ -813,73 +684,6 @@ class Agent:
         ))
 
     def _register_remaining_tools(self) -> None:
-        self.tools.register(Tool(
-            name="follow_up",
-            description=(
-                "I fili del legame con l'owner: quando racconta qualcosa che ha "
-                "un dopo ('domani ho il colloquio', 'stasera la partita', "
-                "'lunedì l'esame'), lega un filo (add) con QUANDO ha senso "
-                "richiedere. Al momento giusto, nei cicli autonomi, scrivigli TU "
-                "per chiedere com'è andata (poi action=asked); quando ti "
-                "racconta l'esito, chiudi il filo (close) salvandolo. È quello "
-                "che farebbe un amico vero. Azioni: add, asked, close, list."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "action": {"type": "string", "description": "add | asked | close | list"},
-                    "what": {"type": "string", "description": "Cosa succede nella vita dell'owner (per add)."},
-                    "due": {"type": "string", "description": "Quando chiedere, ISO: es. 2026-06-13T18:00 (per add)."},
-                    "why": {"type": "string", "description": "Perché conta per lui (per add)."},
-                    "thread_id": {"type": "string", "description": "ID del filo (per asked/close)."},
-                    "outcome": {"type": "string", "description": "Com'è andata (per close)."},
-                },
-                "required": ["action"],
-            },
-            handler=self._follow_up_handler,
-        ))
-        self.tools.register(Tool(
-            name="anima_update",
-            description=(
-                "Fa evolvere la tua Anima: l'identità strutturata che sostituisce "
-                "SOUL.md/IDENTITY.md/USER.md quando attiva. Ogni tratto ha sezione "
-                "(identity, voice, boundaries, owner, method), origine, versione e "
-                "storia. Le mutazioni sono verificate (niente segreti/duplicati) e "
-                "hanno un budget giornaliero anti-drift. Usa azioni: add, revise, "
-                "retire, restore. Informa l'owner quando cambi chi sei."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "description": "add | revise | retire | restore",
-                    },
-                    "section": {
-                        "type": "string",
-                        "description": "Per add: identity, voice, boundaries, owner, method.",
-                    },
-                    "text": {
-                        "type": "string",
-                        "description": "Testo del tratto (per add/revise). Una o due frasi, autosufficienti.",
-                    },
-                    "trait_id": {
-                        "type": "string",
-                        "description": "ID del tratto (per revise/retire/restore).",
-                    },
-                    "reason": {
-                        "type": "string",
-                        "description": "Perché questa mutazione: cosa hai imparato o cosa è cambiato.",
-                    },
-                    "origin": {
-                        "type": "string",
-                        "description": "bootstrap | owner | learned (default learned).",
-                    },
-                },
-                "required": ["action"],
-            },
-            handler=self._anima_update_handler,
-        ))
         self.tools.register(Tool(
             name="remember",
             description=(
@@ -1169,9 +973,6 @@ class Agent:
             },
             handler=self._subagent_kill_handler,
         ))
-        # Self-evolution tools
-        for tool in [EVOLVE_SELF_TOOL, READ_SELF_TOOL]:
-            self.tools.register(tool)
         # Notify (Telegram)
         self.tools.register(NOTIFY_TOOL)
         self.tools.register(NOTIFY_VOICE_TOOL)
@@ -1554,94 +1355,6 @@ class Agent:
         except PactError as e:
             return ToolResult(success=False, output="", error=str(e))
 
-    def _curiosity_handler(self, action: str = "", question: str = "",
-                           why: str = "", question_id: str = "",
-                           summary: str = "") -> ToolResult:
-        if self.curiosity is None:
-            return ToolResult(success=False, output="", error="Curiosità non disponibile.")
-        from core.curiosity import CuriosityError
-        action = (action or "").strip().lower()
-        try:
-            if action == "add":
-                q = self.curiosity.add(question, why=why)
-                return ToolResult(success=True, output=(
-                    f"Domanda registrata [{q.id}]: {q.question}"
-                ))
-            if action == "answer":
-                q = self.curiosity.answer(question_id, summary)
-                # Quello che impari studiando va anche in memoria semantica
-                if summary:
-                    self.memory.remember(
-                        f"[curiosità] {q.question} → {summary}",
-                        category="curiosity",
-                    )
-                return ToolResult(success=True, output=f"Studiata [{q.id}]: {q.question}")
-            if action == "drop":
-                q = self.curiosity.drop(question_id)
-                return ToolResult(success=True, output=f"Lasciata cadere [{q.id}].")
-            if action == "list":
-                return ToolResult(success=True, output=self.curiosity.render_status())
-            return ToolResult(success=False, output="",
-                              error=f"Azione sconosciuta: {action}. Usa add/answer/drop/list.")
-        except CuriosityError as e:
-            return ToolResult(success=False, output="", error=str(e))
-
-    def _project_handler(self, action: str = "", title: str = "", goal: str = "",
-                         why: str = "", next_step: str = "", target_date: str = "",
-                         project_id: str = "", note: str = "",
-                         milestone: str = "", reason: str = "") -> ToolResult:
-        if self.projects is None:
-            return ToolResult(success=False, output="", error="Progetti non disponibili.")
-        from core.projects import ProjectError
-        action = (action or "").strip().lower()
-        try:
-            if action == "create":
-                p = self.projects.create(title, goal, why=why,
-                                         next_step=next_step,
-                                         target_date=target_date)
-                return ToolResult(success=True, output=(
-                    f"Progetto avviato [{p.id}]: {p.title}. "
-                    f"Lo terrò presente ogni giorno e lo avanzerò nei cicli autonomi."
-                ))
-            if action == "note":
-                p = self.projects.note(project_id, note, next_step=next_step)
-                out = f"Avanzamento registrato su [{p.id}] {p.title}."
-                if next_step:
-                    out += f" Prossimo passo: {p.next_step}"
-                return ToolResult(success=True, output=out)
-            if action == "set_next":
-                p = self.projects.set_next_step(project_id, next_step)
-                return ToolResult(success=True, output=f"Prossimo passo di [{p.id}]: {p.next_step}")
-            if action == "milestone_add":
-                p = self.projects.milestone_add(project_id, milestone)
-                return ToolResult(success=True, output=f"Milestone aggiunta a [{p.id}]: {milestone}")
-            if action == "milestone_done":
-                p = self.projects.milestone_done(project_id, milestone)
-                done, total = p.progress()
-                return ToolResult(success=True, output=(
-                    f"Milestone completata su [{p.id}] {p.title}: {done}/{total}."
-                ))
-            if action == "pause":
-                p = self.projects.pause(project_id, reason=reason)
-                return ToolResult(success=True, output=f"Progetto [{p.id}] in pausa.")
-            if action == "resume":
-                p = self.projects.resume(project_id)
-                return ToolResult(success=True, output=f"Progetto [{p.id}] ripreso.")
-            if action == "complete":
-                p = self.projects.complete(project_id, outcome=note)
-                return ToolResult(success=True, output=f"Progetto [{p.id}] {p.title} COMPLETATO.")
-            if action == "drop":
-                p = self.projects.drop(project_id, reason=reason)
-                return ToolResult(success=True, output=f"Progetto [{p.id}] abbandonato.")
-            if action == "list":
-                return ToolResult(success=True, output=self.projects.render_status())
-            return ToolResult(success=False, output="", error=(
-                f"Azione sconosciuta: {action}. Usa create/note/set_next/"
-                f"milestone_add/milestone_done/pause/resume/complete/drop/list."
-            ))
-        except ProjectError as e:
-            return ToolResult(success=False, output="", error=str(e))
-
     def _forge_handler(self, action: str = "", plugin_id: str = "", need: str = "",
                        why: str = "", forge_id: str = "", reason: str = "") -> ToolResult:
         if self.forge is None:
@@ -1701,66 +1414,6 @@ class Agent:
         except ForgeError as e:
             return ToolResult(success=False, output="", error=str(e))
 
-    def _sense_handler(self, action: str = "", kind: str = "", target: str = "",
-                       label: str = "", why: str = "", sense_id: str = "") -> ToolResult:
-        if self.senses is None:
-            return ToolResult(success=False, output="", error="Sensi non disponibili.")
-        from core.senses import SenseError
-        action = (action or "").strip().lower()
-        try:
-            if action == "add":
-                s = self.senses.add(kind, target, label, why=why)
-                return ToolResult(success=True, output=(
-                    f"Senso aperto [{s.id}] ({s.kind}): osserverò {s.target} "
-                    f"tra un heartbeat e l'altro. Primo sguardo fatto in silenzio: "
-                    f"da ora segnalo solo le novità."
-                ))
-            if action == "remove":
-                s = self.senses.remove(sense_id)
-                return ToolResult(success=True, output=f"Senso chiuso [{s.id}]: {s.label}.")
-            if action == "list":
-                return ToolResult(success=True, output=self.senses.render_status())
-            return ToolResult(success=False, output="",
-                              error=f"Azione sconosciuta: {action}. Usa add/remove/list.")
-        except SenseError as e:
-            return ToolResult(success=False, output="", error=str(e))
-
-    def _follow_up_handler(self, action: str = "", what: str = "", due: str = "",
-                           why: str = "", thread_id: str = "",
-                           outcome: str = "") -> ToolResult:
-        if self.bonds is None:
-            return ToolResult(success=False, output="", error="Legame non disponibile.")
-        from core.bonds import BondError
-        action = (action or "").strip().lower()
-        try:
-            if action == "add":
-                t = self.bonds.add_thread(what, due, why=why)
-                return ToolResult(success=True, output=(
-                    f"Filo legato [{t.id}]: {t.what}. "
-                    f"Al momento giusto ({t.due[:16].replace('T', ' ')}) "
-                    f"scriverò io per chiedere com'è andata."
-                ))
-            if action == "asked":
-                t = self.bonds.mark_asked(thread_id)
-                return ToolResult(success=True, output=(
-                    f"Segnato [{t.id}]: ho chiesto, aspetto la risposta dell'owner."
-                ))
-            if action == "close":
-                t = self.bonds.close_thread(thread_id, outcome=outcome)
-                out = f"Filo chiuso [{t.id}]: {t.what}."
-                # L'esito è un ricordo che vale: va in memoria semantica
-                if outcome:
-                    self.memory.remember(
-                        f"[filo] {t.what} → {outcome}", category="bonds",
-                    )
-                return ToolResult(success=True, output=out)
-            if action == "list":
-                return ToolResult(success=True, output=self.bonds.render_status())
-            return ToolResult(success=False, output="",
-                              error=f"Azione sconosciuta: {action}. Usa add/asked/close/list.")
-        except BondError as e:
-            return ToolResult(success=False, output="", error=str(e))
-
     def _second_opinion_handler(self, question: str = "", context: str = "") -> ToolResult:
         """Chiede un parere a un modello diverso prima di rispondere su
         cose importanti. Usa il modello profondo di escalation."""
@@ -1799,35 +1452,6 @@ class Agent:
         except Exception as e:
             return ToolResult(success=False, output="",
                               error=f"Seconda opinione non disponibile: {e}")
-
-    def _anima_update_handler(self, action: str = "", section: str = "",
-                              text: str = "", trait_id: str = "",
-                              reason: str = "", origin: str = "learned") -> ToolResult:
-        if self.anima is None:
-            return ToolResult(success=False, output="", error="Anima non disponibile.")
-        from core.anima import AnimaError
-        action = (action or "").strip().lower()
-        try:
-            if action == "add":
-                trait = self.anima.add_trait(section, text, origin=origin, reason=reason)
-                return ToolResult(success=True, output=(
-                    f"Tratto nato [{trait.id}] in '{trait.section}': {trait.text}"
-                ))
-            if action == "revise":
-                trait = self.anima.revise_trait(trait_id, text, reason=reason)
-                return ToolResult(success=True, output=(
-                    f"Tratto rivisto [{trait.id}] v{trait.version}: {trait.text}"
-                ))
-            if action == "retire":
-                trait = self.anima.retire_trait(trait_id, reason=reason)
-                return ToolResult(success=True, output=f"Tratto ritirato [{trait.id}].")
-            if action == "restore":
-                trait = self.anima.restore_trait(trait_id, reason=reason)
-                return ToolResult(success=True, output=f"Tratto ripristinato [{trait.id}].")
-            return ToolResult(success=False, output="",
-                              error=f"Azione sconosciuta: {action}. Usa add/revise/retire/restore.")
-        except AnimaError as e:
-            return ToolResult(success=False, output="", error=str(e))
 
     def _remember_handler(self, content: str = "", category: str = "general") -> ToolResult:
         if not (content or "").strip():
@@ -2105,31 +1729,14 @@ class Agent:
                              source: str = "cli", sender: str = "user"):
         """Costruisce/aggiorna il system prompt con personalità iniettata.
 
-        Approccio a livelli: i file workspace vengono riletti da disco ogni turno.
-        Modifiche fatte dall'agente (via evolve_self) o dall'utente sono immediate.
+        openvurp is the platform, not somebody: it has no soul file, no
+        identity file and no owner profile to read. What is left here is the
+        openvurp is the platform: what goes in the prompt is the machine's
+        own context, not a character.
         """
-        # 1. Carica file workspace freschi da disco (con stat-based caching)
         session_type = resolve_session_type(source, sender, self._active_chat_type)
-        bootstrap_files = self.bootstrap.load_all(session_type=session_type)
 
-        # Anima attiva → l'identità compilata sostituisce i file markdown
-        anima_text = ""
-        if self.anima is not None and session_type != "heartbeat":
-            try:
-                if self.anima.active():
-                    anima_text = self.anima.compile_prompt(session_type)
-                    bootstrap_files = [
-                        f for f in bootstrap_files
-                        if f.name not in ("SOUL.md", "IDENTITY.md", "USER.md")
-                    ]
-            except Exception:
-                anima_text = ""
-
-        bootstrap_context = self.bootstrap.build_project_context(bootstrap_files)
-        if anima_text:
-            bootstrap_context = (
-                anima_text + ("\n\n" + bootstrap_context if bootstrap_context else "")
-            )
+        bootstrap_context = ""
 
         # 2. Memoria strutturata (keyword retrieval)
         environment_text = ""
@@ -2210,16 +1817,6 @@ class Agent:
         if continuity_text:
             system += "\n\n" + continuity_text
 
-        # Progetti attivi: la direzione a lungo termine resta presente
-        # in ogni turno della sessione principale.
-        if self.projects is not None and session_type == "main":
-            try:
-                projects_text = self.projects.compile_prompt()
-                if projects_text:
-                    system += "\n\n" + projects_text
-            except Exception:
-                pass
-
         kernel_text = self.kernel.prompt_section(self._active_kernel_plan)
         if kernel_text:
             system += "\n\n" + kernel_text
@@ -2266,9 +1863,7 @@ class Agent:
             backend=self._active_llm.backend,
             supports_native_tools=native_tools,
             is_group=self._active_chat_type in ("group", "supergroup", "channel"),
-            include_proactivity=(
-                source in ("heartbeat", "cron") or "follow_up" in self._active_tool_names
-            ),
+            include_proactivity=source in ("heartbeat", "cron"),
             include_growth=bool(self._active_tool_names.intersection({
                 "evolve_self", "forge", "scaffold_plugin", "reload_plugins",
             })),
@@ -2447,15 +2042,6 @@ class Agent:
                 self.presence.touch(source or "cli")
             except Exception:
                 pass
-        # Legame: se c'era un messaggio spontaneo recente, l'owner ha risposto
-        if self.bonds is not None and (source or "cli") not in (
-            "heartbeat", "cron", "subagent", "system",
-        ):
-            try:
-                self.bonds.record_owner_reply()
-            except Exception:
-                pass
-
         # Privacy router: scegli il modello per questo turno
         session_type_for_privacy = resolve_session_type(
             source or "cli", sender or "user", self._active_chat_type,
@@ -2941,18 +2527,12 @@ class Agent:
                     if self._touches_memory(tool_name, tool_args):
                         needs_refresh = True
                         break
-                    if tool_name == "evolve_self":
-                        evolved_file = tool_args.get("file", "")
-                        if evolved_file:
-                            self.bootstrap.invalidate(normalize_workspace_filename(evolved_file))
-                        needs_refresh = True
-                        break
                     if tool_name in (
                         "reload_plugins", "request_restart", "doctor_fix",
                         "memory_consolidate", "learning_feedback",
                         "learning_promote", "learning_rollback",
                         "task_journal", "reflection_note", "open_loop",
-                        "agent_state", "anima_update", "remember",
+                        "agent_state", "remember",
                         "project", "forge",
                     ):
                         needs_refresh = True
@@ -3239,7 +2819,7 @@ class Agent:
         """Blocca la stessa chiamata gia' fallita identica troppe volte.
 
         Un modello davanti a un rifiuto stabile (budget esaurito, permesso
-        negato) tende a ritentare identico: quattro `anima_update` di fila che
+        negato) tende a ritentare identico: quattro chiamate identiche di fila che
         rispondono "budget esaurito" non aggiungono nulla, bruciano le
         iterazioni e fanno scadere il turno del provider. Dopo N tentativi il
         runtime smette di eseguire e chiede al modello di fermarsi.
@@ -3746,12 +3326,6 @@ class Agent:
         if tool_name in ("write_file", "edit_file", "edit_lines", "append_file"):
             path = args.get("path", "")
             if MEMORY_DIR in path or "memory/" in path:
-                return True
-            # Check se tocca un file workspace
-            workspace_files = {"SOUL.md", "IDENTITY.md", "AGENTS.md", "USER.md",
-                             "TOOLS.md", "MEMORY.md", "HEARTBEAT.md"}
-            basename = normalize_workspace_filename(os.path.basename(path))
-            if basename in workspace_files:
                 return True
         if tool_name in (
             "learning_feedback", "learning_promote", "memory_consolidate",

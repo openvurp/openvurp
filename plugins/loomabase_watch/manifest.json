@@ -1,9 +1,0 @@
-{
-    "id": "loomabase_watch",
-    "name": "GitHub Repo Watcher",
-    "version": "0.1.0",
-    "description": "Osserva repo GitHub (stelle, issue, fork) e notifica su Telegram al delta. Config in memory/watchers.md.",
-    "hooks": ["on_heartbeat"],
-    "tools": [],
-    "enabled": true
-}

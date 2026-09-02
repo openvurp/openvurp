@@ -10,7 +10,6 @@ import json
 import os
 import time
 
-from core.bootstrap import BootstrapLoader
 from core.environment import EnvironmentInspector, render_environment_prompt
 from core.llm import create_llm_client
 from core.method import build_operating_method
@@ -127,15 +126,11 @@ def run_text_job(job: dict, tool_names: list[str] | None = None) -> str:
     workspace_dir = _workspace_dir()
     llm = create_llm_client(backend=job.get("backend", ""), model=job.get("model", ""))
 
-    bootstrap = BootstrapLoader(workspace_dir)
-    bootstrap_files = bootstrap.load_all(session_type="subagent")
-    workspace_context = bootstrap.build_project_context(bootstrap_files)
     snapshot = EnvironmentInspector(workspace_dir).get_snapshot()
     method = build_operating_method(snapshot, tool_names or [])
     environment = render_environment_prompt(snapshot)
 
     system_prompt = (
-        f"{workspace_context}\n\n"
         f"{environment}\n\n"
         f"{method}\n\n"
         f"## SUBAGENT MODE\n"

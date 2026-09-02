@@ -33,8 +33,8 @@ PACKS: dict[str, set[str]] = {
     "memory": {
         "remember", "memory_consolidate", "learning_feedback",
         "learning_review", "learning_promote", "learning_rollback",
-        "task_journal", "reflection_note", "open_loop", "curiosity",
-        "project", "sense", "follow_up", "anima_update", "pact",
+        "task_journal", "reflection_note", "open_loop",
+        "pact",
     },
     "communication": {
         "notify", "notify_voice", "notify_file", "notify_photo",
@@ -75,8 +75,7 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
         "ricerca", "download", "pdf", "immagine", "foto", "audio", "screenshot",
     ),
     "memory": (
-        "memoria", "ricorda", "diario", "lezione", "obiettivo", "progetto attivo",
-        "riflessione", "curios", "patto", "personalita", "anima",
+        "memoria", "ricorda", "lezione", "riflessione", "patto",
     ),
     "communication": (
         "telegram", "notifica", "invia", "messaggio", "sondaggio", "poll",

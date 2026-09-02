@@ -56,9 +56,14 @@ class MirrorCase:
 
 
 class Mirror:
-    def __init__(self, memory_dir: str):
+    def __init__(self, memory_dir: str, scope: str = ""):
+        from core.learning import scoped_dir
         self.memory_dir = memory_dir
-        self.dir = os.path.join(memory_dir, MIRROR_DIR)
+        self.scope = str(scope or "")
+        # Lo specchio rigioca le correzioni di CHI le ha ricevute: pescarle da
+        # un mucchio comune significherebbe misurare un agente sugli errori di
+        # un altro.
+        self.dir = scoped_dir(memory_dir, MIRROR_DIR, self.scope)
         self.path = os.path.join(self.dir, CASES_FILE)
         self._cases: list[MirrorCase] = []
         self._load()
@@ -83,7 +88,9 @@ class Mirror:
 
     def harvest(self) -> int:
         """Crea casi dalle correzioni nel learning log. Returns nuovi casi."""
-        events_path = os.path.join(self.memory_dir, "learning", "events.jsonl")
+        from core.learning import scoped_dir
+        events_path = os.path.join(
+            scoped_dir(self.memory_dir, "learning", self.scope), "events.jsonl")
         if not os.path.exists(events_path):
             return 0
 
@@ -201,15 +208,7 @@ class Mirror:
 
         result = {"run": passed + failed, "passed": passed, "failed": failed}
         if result["run"]:
-            try:
-                from core.growth import record_growth_event
-                record_growth_event(
-                    self.memory_dir, "mirror",
-                    f"specchio: {passed}/{result['run']} correzioni non ripetute",
-                )
-            except Exception:
-                pass
-        return result
+            return result
 
     # ── Statistiche ──
 

@@ -114,13 +114,6 @@ class Forge:
         except OSError:
             pass
 
-    def _growth(self, note: str):
-        try:
-            from core.growth import record_growth_event
-            record_growth_event(self.memory_dir, "forge", note)
-        except Exception:
-            pass
-
     # ── Helpers ──
 
     def get(self, forge_id: str) -> ForgeEntry:
@@ -287,7 +280,6 @@ class Forge:
         entry.adopted_at = _now()
         entry.log("adopted: capability in service")
         self._save()
-        self._growth(f"capability forged: {entry.plugin_id} — {entry.need[:60]}")
         return entry
 
     def reject(self, forge_id: str, reason: str = "") -> ForgeEntry:
@@ -316,7 +308,6 @@ class Forge:
         entry.retired_at = _now()
         entry.log(f"ritirata: {reason[:150]}" if reason else "ritirata")
         self._save()
-        self._growth(f"capacità ritirata: {entry.plugin_id}")
         return entry
 
     # ── Rendering ──

@@ -101,25 +101,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def read_identity_name() -> str:
-    path = os.path.join(OPENVURP_DIR, "IDENTITY.md")
-    if not os.path.exists(path):
-        return ""
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            for raw in handle:
-                line = raw.strip()
-                marker = "- **Name:**"
-                marker_it = "- **Nome:**"
-                if line.lower().startswith(marker.lower()):
-                    return line[len(marker):].strip()
-                if line.lower().startswith(marker_it.lower()):
-                    return line[len(marker_it):].strip()
-    except OSError:
-        return ""
-    return ""
-
-
 def wrap_text_block(text: str, width: int, prefix: str = "") -> list[str]:
     width = max(12, width)
     wrapper = textwrap.TextWrapper(
@@ -723,7 +704,8 @@ class TuiBridgeUI:
 class ExperimentalTUI:
     def __init__(self, args: argparse.Namespace):
         self.args = args
-        self.identity_name = read_identity_name() or "assistant"
+        # openvurp is the platform: the name at the top is its own.
+        self.identity_name = "openvurp"
         self.session_label = "main"
         self.current_agent_id = "default"
         self.event_queue: "queue.Queue[tuple[str, object]]" = queue.Queue()

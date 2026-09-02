@@ -83,7 +83,6 @@ all = [
 
 [project.scripts]
 openvurp = "main:app_main"
-openvurp-cli = "cli:main"
 openvurp-tui = "TUI:main"
 openvurp-gateway = "runtime_gateway:main"
 

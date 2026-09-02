@@ -522,10 +522,17 @@ class Swarm:
                     parent.ui = WebApprovalUI(previous_ui, chat["id"], member.name)
                 except Exception:
                     pass
+            # Chi impara e' questo agente, non la piattaforma: le lezioni e
+            # le correzioni finiscono nel SUO archivio. La chiave e' l'id e non
+            # il nome, che l'owner puo' cambiare quando vuole.
+            from core import learning as _learning
+            token = _learning.set_scope(member.id)
             try:
                 out = str(parent._execute_tool(name, args or {}, source) or "")
             except Exception as exc:
                 out = f"[TOOL FALLITO] {exc}"
+            finally:
+                _learning.reset_scope(token)
             note(name, args, out)
             try:
                 return out

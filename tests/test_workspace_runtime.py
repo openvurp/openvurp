@@ -1,4 +1,9 @@
-"""Test per bootstrap legacy, self-evolution e memoria sessioni."""
+"""Memory across sessions, channel replies, and the vision model.
+
+This file used to also cover the workspace files openvurp read about
+itself, and the tools that rewrote them. openvurp is the platform: it
+has no identity file, so those went with the files.
+"""
 
 import os
 import sys
@@ -7,8 +12,6 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.bootstrap import BootstrapLoader, normalize_workspace_filename, resolve_workspace_file
-from core.executor import Executor
 from core.memory import MemoryManager
 from core.personality import (
     SILENCE_TOKEN,
@@ -18,101 +21,8 @@ from core.personality import (
     slack_reaction_name,
 )
 from core.session import Session
-from core.tools import ToolRegistry
-from main import finalize_channel_response, read_identity_name
-from tools import evolve as evolve_tools
+from main import finalize_channel_response
 from tools import media as media_tools
-
-
-def test_bootstrap_loader_reads_legacy_lowercase_soul():
-    with tempfile.TemporaryDirectory() as tmp:
-        with open(os.path.join(tmp, "soul.md"), "w", encoding="utf-8") as f:
-            f.write("Sono openvurp.\n")
-        with open(os.path.join(tmp, "AGENTS.md"), "w", encoding="utf-8") as f:
-            f.write("Regole.\n")
-
-        loader = BootstrapLoader(tmp)
-        files = loader.load_all()
-        loaded = {entry.name: entry for entry in files if not entry.missing}
-
-        assert "SOUL.md" in loaded
-        assert loaded["SOUL.md"].content == "Sono openvurp.\n"
-        assert loaded["SOUL.md"].path.endswith("soul.md")
-
-        context = loader.build_project_context(files)
-        assert "SOUL.md è presente" in context
-        assert "Sono openvurp." in context
-
-
-def test_workspace_file_resolution_normalizes_legacy_names():
-    with tempfile.TemporaryDirectory() as tmp:
-        with open(os.path.join(tmp, "soul.md"), "w", encoding="utf-8") as f:
-            f.write("ciao")
-
-        canonical, path = resolve_workspace_file(tmp, "SOUL.md")
-        assert canonical == "SOUL.md"
-        assert path.endswith("soul.md")
-        assert normalize_workspace_filename("soul.md") == "SOUL.md"
-
-
-def test_bootstrap_main_loads_daily_memory_but_group_skips_private_memory():
-    with tempfile.TemporaryDirectory() as tmp:
-        os.makedirs(os.path.join(tmp, "memory"), exist_ok=True)
-        for name in ("AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md", "TOOLS.md", "MEMORY.md"):
-            with open(os.path.join(tmp, name), "w", encoding="utf-8") as f:
-                f.write(name)
-
-        today = datetime.now().date().isoformat()
-        yesterday = (datetime.now().date() - timedelta(days=1)).isoformat()
-        with open(os.path.join(tmp, "memory", f"{today}.md"), "w", encoding="utf-8") as f:
-            f.write("oggi")
-        with open(os.path.join(tmp, "memory", f"{yesterday}.md"), "w", encoding="utf-8") as f:
-            f.write("ieri")
-
-        loader = BootstrapLoader(tmp)
-        main_files = {entry.name for entry in loader.load_all(session_type="main") if not entry.missing}
-        group_files = {entry.name for entry in loader.load_all(session_type="group") if not entry.missing}
-
-        assert "MEMORY.md" in main_files
-        assert f"memory/{today}.md" in main_files
-        assert f"memory/{yesterday}.md" in main_files
-        assert "MEMORY.md" not in group_files
-        assert not any(name.startswith("memory/") for name in group_files)
-
-
-def test_bootstrap_context_marks_missing_workspace_files():
-    with tempfile.TemporaryDirectory() as tmp:
-        with open(os.path.join(tmp, "AGENTS.md"), "w", encoding="utf-8") as f:
-            f.write("regole")
-
-        loader = BootstrapLoader(tmp)
-        context = loader.build_project_context(loader.load_all())
-
-        assert "File workspace mancante" in context
-        assert "SOUL.md" in context
-
-
-def test_evolve_tools_follow_the_real_workspace_file():
-    original_get_openvurp_dir = evolve_tools._get_openvurp_dir
-
-    with tempfile.TemporaryDirectory() as tmp:
-        with open(os.path.join(tmp, "soul.md"), "w", encoding="utf-8") as f:
-            f.write("vecchio")
-        evolve_tools._get_openvurp_dir = lambda: tmp
-        try:
-            result = evolve_tools._evolve_handler(
-                file="SOUL.md",
-                content="nuovo contenuto",
-                reason="test",
-            )
-            assert "[EVOLUZIONE]" in result
-            with open(os.path.join(tmp, "soul.md"), "r", encoding="utf-8") as f:
-                assert f.read() == "nuovo contenuto"
-
-            read_back = evolve_tools._read_self_handler(file="SOUL.md")
-            assert read_back == "nuovo contenuto"
-        finally:
-            evolve_tools._get_openvurp_dir = original_get_openvurp_dir
 
 
 def test_memory_manager_can_recall_recent_session_previews():
@@ -157,32 +67,6 @@ def test_reaction_token_is_parsed_and_preserved_for_supported_channels():
     assert format_callback_response("[[react:👍]]", "telegram") == "[[react:👍]]"
     assert prepare_outbound_response("[[react:👍]]", "telegram") == ""
     assert slack_reaction_name("👍") == "thumbsup"
-
-
-def test_read_identity_name_uses_identity_md_without_framework_name():
-    with tempfile.TemporaryDirectory() as tmp:
-        identity_path = os.path.join(tmp, "IDENTITY.md")
-        with open(identity_path, "w", encoding="utf-8") as f:
-            f.write("# IDENTITY.md\n\n- **Nome:** Otto\n")
-
-        def _load(path: str) -> str:
-            with open(path, "r", encoding="utf-8") as handle:
-                return handle.read()
-
-        assert read_identity_name(tmp, _load) == "Otto"
-
-
-def test_read_identity_name_accepts_english_identity_md():
-    with tempfile.TemporaryDirectory() as tmp:
-        identity_path = os.path.join(tmp, "IDENTITY.md")
-        with open(identity_path, "w", encoding="utf-8") as f:
-            f.write("# IDENTITY.md\n\n- **Name:** openvurp\n")
-
-        def _load(path: str) -> str:
-            with open(path, "r", encoding="utf-8") as handle:
-                return handle.read()
-
-        assert read_identity_name(tmp, _load) == "openvurp"
 
 
 def test_image_analyze_uses_dedicated_vision_model():
@@ -287,15 +171,8 @@ def test_image_analyze_does_not_reuse_codex_chat_backend():
 
 
 if __name__ == "__main__":
-    test_bootstrap_loader_reads_legacy_lowercase_soul()
-    test_workspace_file_resolution_normalizes_legacy_names()
-    test_bootstrap_main_loads_daily_memory_but_group_skips_private_memory()
-    test_bootstrap_context_marks_missing_workspace_files()
-    test_evolve_tools_follow_the_real_workspace_file()
     test_memory_manager_can_recall_recent_session_previews()
     test_channel_response_suppresses_explicit_silence_token()
     test_reaction_token_is_parsed_and_preserved_for_supported_channels()
-    test_read_identity_name_uses_identity_md_without_framework_name()
-    test_read_identity_name_accepts_english_identity_md()
     test_image_analyze_uses_dedicated_vision_model()
     print("Tutti i test workspace/runtime passati!")

@@ -1,105 +1,112 @@
 # openvurp Roadmap
 
 Where openvurp is and where it's going. Everything marked **done** is in the
-code today, with tests. The rest is honest direction, not promises — a public
-roadmap with open items is an invitation, not a weakness.
+code today, with tests. The rest is honest direction, not a promise.
 
-## 1. Public Hygiene
+**What openvurp is:** the place where you keep your agents. Not an agent
+itself. Anything that gave openvurp a character of its own — an identity, a
+diary, dreams, a life of its own between your messages — has been removed. That
+decision is what most of the sections below now hang from.
 
-- done: env-based secrets
-- done: `.env.example`
-- done: secret scanner (`scripts/secret_scan.py`)
-- done: README, SECURITY
-- done: reproducible install and test commands
-- done: code integrity baseline + verify (`/integrity`)
+## 1. The roster
 
-## 2. Safety Core
+- done: agents you create — name, job, engine — and none shipped with the product
+- done: one conversation per agent, on disk, surviving restarts
+- done: every agent carries the roster in its own tools, and asks the right colleague itself
+- done: `ask_everyone` — a question to the whole roster, silence from those it doesn't concern
+- done: an agent can be renamed or removed from the page; its conversation is archived, not destroyed
+- per-agent tool allow-lists (today the toolset is the same for everyone)
+- duplicate an agent as a starting point for a new one
 
-- done: unified policy engine for every tool call
-- done: approval requirements by tool, actor, channel, path, and risk
-- done: audit logs with secret redaction
-- done: capability leases for temporary permissions (scoped, TTL, revocable)
-- done: sandbox for file/shell tools; critical commands hard-blocked in every mode
-- done: pacts — owner-negotiated rules enforced above all approval modes
+## 2. The room
+
+- done: they answer each other, not you in parallel — everyone reads what came before
+- done: it ends when a round passes with nobody adding anything, or on Stop
+- done: whoever opened it writes the close: what was agreed, what wasn't, who dissents
+- done: inventing a consensus is forbidden; "we didn't decide" is a valid ending
+- done: repeating yourself counts as silence, not as a turn
+- done: bounded by `MULTIPLAYER_MAX_AGENTS`, `MULTIPLAYER_MAX_ROUNDS`, `MULTIPLAYER_DAILY_CALL_BUDGET`
+- let the owner interject mid-discussion without stopping it
+
+## 3. Safety
+
+- done: unified policy engine on every tool call
+- done: approvals by tool, actor, channel, path and risk; leases with TTL, scoped and revocable
+- done: sandbox for file and shell tools; destructive commands blocked in every mode
+- done: pacts — rules you set once, enforced above every approval mode
 - done: privacy router — private sessions stay on a local model
+- done: audit log with secret redaction
+- done: web/document content marked as data, never as instructions
 - dry-run preview for risky actions
 
-## 3. Verified Learning Loop
+## 4. What an agent learns
 
-- done: local learning events for feedback and tool failures
-- done: review step that creates memory/lesson candidates
-- done: guarded promotion of candidates into memory lessons
-- done: structured task journal
-- done: reflection after completed work
-- done: the Mirror — corrections replayed nightly, scored in `/growth`
-- memory, lesson, and skill candidates from full task traces
-- secret scan and permission review for generated skills
-- tests/dry-runs before promotion
-- skill score, provenance, versioning, and rollback
+- done: corrections and tool failures recorded as learning events
+- done: review step producing lesson candidates, promoted only under guard
+- done: the Mirror — corrections replayed later to check they don't come back
+- done: **per agent** — `memory/agents/<id>/`, keyed by id so a rename costs nothing
+- done: rollback of a lesson that stops holding
+- lessons visible in the page, per agent, with their evidence
+- tests before promotion, and provenance on every lesson
 
-## 4. Memory System
+## 5. Memory
 
-- done: semantic memory for stable facts (SQLite FTS5 + optional embeddings, `remember` tool)
-- done: hybrid retrieval — keyword + vector/FTS5
-- done: nightly curator — consolidates useful daily notes into long-term memory
-- done: nightly dreaming — non-obvious insights over the week
-- done: fading — memories never recalled quietly archive (reversible)
-- episodic memory for events
-- procedural memory for reusable methods (early scaffolding in `core/method.py`)
-- summary-level retrieval
+- done: semantic memory for stable facts (SQLite FTS5 + optional embeddings)
+- done: hybrid retrieval — keyword plus vector
+- done: fading — memories never recalled quietly archive, reversibly
+- per-agent memory: today the store is shared, the way lessons used to be
+- a backup you can actually run: `memory/` has no safety net since `reset.py` went
 
-## 5. Resilience & Always-On
+## 6. Always on
 
 - done: headless systemd service (`Restart=always`), survives reboots
-- done: sentinel — watches internet, LLM backend and Telegram; notices outages
-  **and recoveries**, warns the owner, auto-reattaches Telegram, resumes suspended work
-- done: LLM connection retry with backoff (Ollama hiccups don't drop the turn)
-- done: restart-in-place from `/update` and `/restart`, terminal stays open
-- Windows Task Scheduler helper for full-reboot persistence
+- done: sentinel — watches network and model backend, notices outages and recoveries
+- done: LLM retry with backoff, so a hiccup doesn't drop the turn
+- done: restart in place from `/update`, terminal stays open
+- done: heartbeat reduced to mechanical work — fading and the mirror, nothing autobiographical
+- Windows helper for reboot persistence
 
-## 6. Skill Runtime
+## 7. Tools and skills
 
-- done: candidate vs active skills (candidates stay inert until approved)
 - done: markdown skills with frontmatter, loaded on demand
-- skill metadata: triggers, permissions, tests, owner, version
-- import/export for compatible agent ecosystems
+- done: candidate skills stay inert until approved
+- done: the Forge — an agent drafts and tests a missing tool; adopting it is the owner's call
+- done: drop-in plugins
+- skill metadata: triggers, permissions, tests, version
+- secret scan and permission review on generated skills
 
-## 7. Sub-Agent Orchestration
+## 8. Subagents
 
-- done: real worker subprocesses (kill/timeout-safe), not just text
-- done: model router — heavy work to cloud, light work local
-- task graph execution
-- roles: researcher, coder, reviewer, tester, operator
-- isolated workspaces with controlled merge back into parent context
-- budgets for time, tokens, tools, and permissions
+- done: real worker subprocesses (kill- and timeout-safe), not just text
+- done: model router — heavy work out, light work local
+- roles, task graphs, isolated workspaces
+- budgets for time, tokens and permissions
 
-## 8. Gateway And Channels
+## 9. Channels
 
-- done: Telegram — owner/guest roles, media (photos/voice/docs), inline confirms
-- done: per-channel session isolation
-- done: group-chat privacy rules + chat-id whitelist (private memory never leaks to groups)
-- done: web dashboard — persistent multi-chat + live activity stream + runtime panels, token-gated
-- done: multiplayer rooms — persistent peer profiles, attributed messages, peer review and bounded coordinator synthesis
-- done: token economy — dynamic tool packs, schema-aware budgets, compact route history and per-turn ceilings
-- hardened Telegram pairing
-- Discord, Slack, Signal, email (scaffolding present)
-- dashboard approval controls
+- done: one core every channel goes through — Telegram, Discord, Slack, WhatsApp
+- done: a test forbids any file under `channels/` from touching the roster, the rooms or the swarm
+- done: per-channel allow-lists; an empty one refuses to start
+- done: shared grammar (`@name`, `/agents`, `/all`, `/stop`, `/help`)
+- done: a message from the phone lands in the agent's own conversation
+- one conversation per agent **and per person**: today two allowed users writing to the same agent share its thread
+- approval controls from the channels, not just from the page
 
-## 9. Model Router
+## 10. Engines
 
-- done: local model route for private/sensitive tasks
-- done: fallback backend on retryable failures
-- task-aware routing
-- cost, latency, and quality tracking
-- judge mode for critical outputs
+- done: Ollama and any OpenAI-compatible local server, discovered by knocking on the usual ports
+- done: subscription CLIs (Codex, Claude) with `OPENAI_API_KEY` stripped so they can't fall back to billing
+- done: per-agent engine and model
+- done: token ceilings per turn, per context and per day
+- cost, latency and quality tracking
+- judge mode for critical answers
 
-## 10. Release
+## 11. Release
 
-The repository is private today, so continuous integration is deliberately
-minimal: tests on push, nothing else. It is not worth building a pipeline for
-an audience of one.
+Continuous integration is deliberately minimal for now: the tests run on push,
+nothing else.
 
-- when it goes public: full CI — the suite across every supported Python, the
-  secret scanner, and **built executables that start the whole thing**, so
-  running openvurp does not require a Python toolchain
-- done: declared Python floor is checked against the sources, not assumed
+- done: the declared Python floor is checked against the sources, not assumed
+- full CI: the suite on every supported Python, plus the secret scanner
+- **built executables that start the whole thing**, so running openvurp does not
+  require a Python toolchain

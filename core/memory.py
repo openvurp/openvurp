@@ -74,15 +74,7 @@ class MemoryManager:
             archive = os.path.join(self.base_dir, ".faded", "faded.jsonl")
             faded = self.vector.fade(archive, max_idle_days=idle_days)
             if faded:
-                try:
-                    from core.growth import record_growth_event
-                    record_growth_event(
-                        self.base_dir, "memory",
-                        f"{len(faded)} ricordi sbiaditi (mai più richiamati)",
-                    )
-                except Exception:
-                    pass
-            return len(faded)
+                    return len(faded)
         except Exception:
             return 0
 
