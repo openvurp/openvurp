@@ -182,12 +182,17 @@ class _CLIBackend:
     _run_lock = threading.Semaphore(3)
 
     def __init__(self, *, binary: str, model: str, workspace: str,
-                 timeout: int = 300, max_context_chars: int = 180000,
+                 timeout: int = 300, max_turn_seconds: int = 0,
+                 max_context_chars: int = 180000,
                  require_subscription_login: bool = True):
         self.binary = binary
         self.model = model
         self.workspace = os.path.abspath(workspace)
         self.timeout = max(30, min(int(timeout or 300), 1800))
+        # Quanto puo' durare in tutto un turno, per quanto il provider stia
+        # parlando. Il default e' sei volte il silenzio ammesso: un'analisi
+        # lunga ha tempo di finire, un ciclo impazzito no.
+        self.max_turn_seconds = max(self.timeout, int(max_turn_seconds or self.timeout * 6))
         self.max_context_chars = max_context_chars
         self.require_subscription_login = bool(require_subscription_login)
 
@@ -260,6 +265,29 @@ class CodexCLIBackend(_CLIBackend):
                     timeout=self.timeout, cwd=self.workspace, env=env,
                 )
         except subprocess.TimeoutExpired as exc:
+            # Qui non c'e' streaming, quindi il silenzio non si puo' misurare:
+            # la scadenza resta sulla durata. Ma quello che ha gia' scritto e'
+            # nello stdout del processo ucciso, e vale piu' di un'eccezione.
+            parziale = ""
+            for pezzo in (getattr(exc, "stdout", None), getattr(exc, "stderr", None)):
+                if not pezzo:
+                    continue
+                testo = pezzo.decode("utf-8", "replace") if isinstance(pezzo, bytes) else str(pezzo)
+                for raw_line in testo.splitlines():
+                    try:
+                        event = json.loads(raw_line)
+                    except (TypeError, ValueError):
+                        continue
+                    item = (event or {}).get("item") or {}
+                    if item.get("type") == "agent_message":
+                        parziale = str(item.get("text", "") or "") or parziale
+                if parziale:
+                    break
+            if parziale.strip():
+                return CLIRunResult(
+                    text=parziale.strip() + f"\n\n[interrotto: nessuna risposta per {self.timeout}s]",
+                    input_tokens=0, output_tokens=0, raw=None,
+                )
             raise CLIBackendError(f"Codex timeout dopo {self.timeout}s") from exc
         except OSError as exc:
             raise CLIBackendError(f"Codex non avviabile: {exc}") from exc
@@ -401,7 +429,18 @@ class CodexCLIBackend(_CLIBackend):
                     },
                 )
 
+                # Due orologi, non uno.
+                #
+                # Prima ce n'era uno solo, dall'inizio del turno: una risposta
+                # lunga veniva staccata a meta' frase perche' ci metteva troppo,
+                # anche mentre stava ancora arrivando parola per parola. Ma un
+                # provider che parla non e' un provider morto.
+                #
+                # `deadline` ora misura il SILENZIO: si sposta in avanti a ogni
+                # evento. `hard_deadline` e' il tetto assoluto, per il caso in
+                # cui il provider chiacchieri all'infinito senza concludere.
                 deadline = time.monotonic() + self.timeout
+                hard_deadline = time.monotonic() + self.max_turn_seconds
                 thread_id = ""
                 final_text = ""
                 streamed_parts: list[str] = []
@@ -412,9 +451,27 @@ class CodexCLIBackend(_CLIBackend):
                 completed = False
 
                 while not completed:
+                    adesso = time.monotonic()
+                    scaduto = ""
+                    if adesso >= hard_deadline:
+                        scaduto = f"il turno ha superato {self.max_turn_seconds}s"
+                    elif adesso >= deadline:
+                        scaduto = f"nessuna risposta per {self.timeout}s"
+                    if scaduto:
+                        # Quello che ha gia' detto vale piu' di un'eccezione:
+                        # era gia' stato mostrato a schermo, e buttarlo via
+                        # significava far leggere una risposta intera e poi
+                        # annunciare che non era arrivata.
+                        parziale = (final_text or "".join(streamed_parts)).strip()
+                        if parziale:
+                            return CLIRunResult(
+                                text=parziale + f"\n\n[interrotto: {scaduto}]",
+                                input_tokens=input_tokens,
+                                output_tokens=output_tokens,
+                                raw=last_event,
+                            )
+                        raise CLIBackendError(f"Codex: {scaduto}")
                     remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise CLIBackendError(f"Codex timeout dopo {self.timeout}s")
                     try:
                         raw_line = events.get(timeout=min(0.25, remaining))
                     except queue.Empty:
@@ -438,6 +495,9 @@ class CodexCLIBackend(_CLIBackend):
                     if not isinstance(event, dict):
                         continue
                     last_event = event
+                    # Il provider ha parlato: e' vivo, l'orologio del silenzio
+                    # riparte. Il tetto assoluto invece non si tocca.
+                    deadline = time.monotonic() + self.timeout
 
                     request_id = event.get("id")
                     method = str(event.get("method", "") or "")

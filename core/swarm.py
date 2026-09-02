@@ -425,15 +425,24 @@ class Swarm:
         return text
 
     @staticmethod
-    def _live(chat_id: str, author: str):
+    def _live(chat_id: str, author: str, sink: list | None = None):
         """Pubblica i pezzi della risposta mentre arrivano.
 
         Senza questo l'agente chiama il modello, aspetta tutto, e consegna il
         blocco intero: da fuori sembra bloccato. La dashboard ascolta lo stesso
         bus dell'agente principale, quindi basta parlargli nella sua lingua.
         """
+        # Quello che passa di qui lo tiene anche chi ci ha chiamato. Se il turno
+        # cade DOPO che l'agente ha gia' parlato, il testo era gia' sullo schermo:
+        # perderlo significa far leggere una risposta e poi dire che non e'
+        # arrivata.
         if not chat_id:
-            return None, (lambda: None)
+            if sink is None:
+                return None, (lambda: None)
+            def solo_raccogli(delta: str):
+                if delta:
+                    sink.append(delta)
+            return solo_raccogli, (lambda: None)
         from core import activity
 
         meta = {"source": "dashboard", "chat_id": chat_id,
@@ -441,6 +450,8 @@ class Swarm:
 
         def on_text(delta: str):
             if delta:
+                if sink is not None:
+                    sink.append(delta)
                 try:
                     activity.publish("token", text=delta, **meta)
                 except Exception:
@@ -456,14 +467,15 @@ class Swarm:
 
     def _run_with_tools(self, member: SwarmMember, client,
                         messages: list[dict], allow_peers: bool = True,
-                        chat_id: str = "", steps: list | None = None) -> str:
+                        chat_id: str = "", steps: list | None = None,
+                        collected: list | None = None) -> str:
         """Fa parlare l'agente lasciandogli usare i suoi strumenti."""
         import config as cfg
 
         names = self.tool_names()
         parent = self.agent
         peers = allow_peers and len(self.list_members()) > 1
-        on_text, done = self._live(chat_id, member.id)
+        on_text, done = self._live(chat_id, member.id, collected)
         if (not names and not peers) or (parent is None and not peers):
             return self._plain(client, messages, on_text, done)
 
@@ -686,6 +698,7 @@ class Swarm:
         messages.append({"role": "user", "content": f"[{sender}] {prompt}"})
 
         self._charge()
+        detto: list[str] = []
         try:
             client = self._client(member)
             # La lista arriva da chi ha iniziato il turno. Se la tenessimo in un
@@ -695,10 +708,17 @@ class Swarm:
             passaggi: list[dict] = steps if steps is not None else []
             text = (self._run_with_tools(
                 member, client, messages, allow_peers=allow_peers,
-                chat_id=chat_id, steps=passaggi,
+                chat_id=chat_id, steps=passaggi, collected=detto,
             ) if tools else str(client.call(messages) or "").strip())
         except Exception as exc:
-            raise SwarmError(f"{member.name} non ha risposto: {exc}") from exc
+            # «non ha risposto» va detto solo se davvero non ha risposto. Se il
+            # turno e' caduto a meta' di un'analisi lunga, quel testo era gia'
+            # sotto gli occhi dell'utente: dichiararlo perso e' due volte falso.
+            parziale = "".join(detto).strip()
+            if parziale:
+                text = parziale + f"\n\n[interrotto: {exc}]"
+            else:
+                raise SwarmError(f"{member.name} non ha risposto: {exc}") from exc
         if not text:
             raise SwarmError(f"{member.name} ha risposto a vuoto.")
 

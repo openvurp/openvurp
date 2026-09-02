@@ -100,7 +100,13 @@ OPENAI_COMPATIBLE_MODEL = _env("OPENAI_COMPATIBLE_MODEL", "")
 CODEX_CLI = _env("CODEX_CLI", "codex")
 CODEX_MODEL = _env("CODEX_MODEL", "gpt-5.6-luna")
 CODEX_SANDBOX = _env("CODEX_SANDBOX", "read-only")
+# Quanto puo' restare in SILENZIO il provider prima di considerarlo morto.
+# Non e' la durata massima della risposta: finche' arrivano parole, l'orologio
+# riparte. Prima era la durata totale, e un'analisi lunga veniva troncata a
+# meta' frase mentre stava ancora scrivendo.
 CODEX_TIMEOUT_SECONDS = _env_int("CODEX_TIMEOUT_SECONDS", 300)
+# Il tetto assoluto del turno, per il provider che parla e non conclude mai.
+CODEX_MAX_TURN_SECONDS = _env_int("CODEX_MAX_TURN_SECONDS", 1800)
 # Context sent to Codex. The old default (12,000) cut openvurp's system prompt
 # in half: the identity, method and memory .md files never reached the model
 # and the agent looked "forgetful". Codex handles far larger windows, so the

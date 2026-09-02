@@ -139,6 +139,7 @@ class LLMClient:
                     model=self.model,
                     workspace=workspace,
                     timeout=getattr(cfg, "CODEX_TIMEOUT_SECONDS", 300),
+                    max_turn_seconds=getattr(cfg, "CODEX_MAX_TURN_SECONDS", 1800),
                     max_context_chars=getattr(cfg, "CODEX_CONTEXT_MAX_CHARS", 12000),
                     require_subscription_login=getattr(
                         cfg, "CODEX_REQUIRE_CHATGPT_LOGIN", True
