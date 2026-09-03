@@ -109,8 +109,10 @@ decision is what most of the sections below now hang from.
 - done: shared grammar (`@name`, `/agents`, `/all`, `/stop`, `/help`)
 - done: a message from the phone lands in the agent's own conversation
 - done: the room's notices and errors reach the phone too (a spent budget used to
-  answer with nothing); Telegram shows "typing" while an agent works and reports
-  a broken turn; the tap-a-name keyboard exists (it called a method that did not);
+  answer with nothing); on Telegram you see the turn as it happens — "amanda
+  has it", the commands she runs, the colleague she consults, "writing the
+  answer" — in one status message edited in place and removed when the answer
+  lands, plus "typing" and a broken turn reported; the tap-a-name keyboard exists (it called a method that did not);
   Discord splits long replies instead of cutting them; a dead WhatsApp bridge says so
 - **approvals do not reach the channels**: a tool that needs permission, asked
   from the phone, waits on the page and is denied after 180 s with no message

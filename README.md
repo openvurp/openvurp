@@ -169,6 +169,10 @@ amanda                     just the name: now you're talking to her
 /help                      this list
 ```
 
+On Telegram you also see the turn as it happens: a status line that says
+*amanda has it*, then the commands she runs and the colleague she consults,
+edited in place until the answer replaces it.
+
 **Every channel needs its own allow-list** (`TELEGRAM_ALLOWED_USERS`,
 `DISCORD_ALLOWED_USERS`, …). An empty one means nobody, and the channel refuses
 to start — opening a door onto your own computer cannot be the default.

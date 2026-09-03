@@ -45,6 +45,18 @@ ATTACHMENTS = (
 )
 
 
+def _accepts_progress(handle) -> bool:
+    """Whether this conversation can report what the agent is doing."""
+    import inspect
+
+    try:
+        params = inspect.signature(handle).parameters
+    except (TypeError, ValueError):
+        return False
+    return "on_progress" in params or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
 def split(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
     """A long message is split where a line ends, not mid-word."""
     text = str(text or "")
@@ -318,17 +330,45 @@ class TelegramChannel(Channel):
                     return
 
         threading.Thread(target=typing, daemon=True).start()
+        # One status message, edited as things happen: "amanda has it",
+        # the commands she runs, the colleague she consults, "writing the
+        # answer". Deleted when the answer arrives, so the thread stays clean.
+        status = {"id": None}
+
+        def progress(state: str):
+            if status["id"] is False:
+                return
+            try:
+                if status["id"] is None:
+                    sent = self._call("sendMessage", chat_id=chat_id, text=state,
+                                      disable_notification=True) or {}
+                    status["id"] = (sent.get("result") or {}).get("message_id") or False
+                else:
+                    self._call("editMessageText", chat_id=chat_id,
+                               message_id=status["id"], text=state)
+            except Exception:
+                pass   # an edit refused ("not modified") is not worth a word
+
+        incoming = Incoming(
+            text=text, channel="telegram", peer_id=user_id or chat_id,
+            sender=sender.get("first_name") or sender.get("username") or "",
+            attachments=files,
+        )
         try:
-            replies = self.conversation.handle(Incoming(
-                text=text, channel="telegram", peer_id=user_id or chat_id,
-                sender=sender.get("first_name") or sender.get("username") or "",
-                attachments=files,
-            ))
+            if _accepts_progress(self.conversation.handle):
+                replies = self.conversation.handle(incoming, on_progress=progress)
+            else:
+                replies = self.conversation.handle(incoming)
         except Exception as exc:
             from core.conversation import Reply
             replies = [Reply(f"[error: {exc}]", chat_id=chat_id)]
         finally:
             done.set()
+            if status["id"]:
+                try:
+                    self._call("deleteMessage", chat_id=chat_id, message_id=status["id"])
+                except Exception:
+                    pass
         # The keyboard refreshes every round: create an agent from the web and
         # the next message already has it among the buttons.
         keyboard = self.keyboard()

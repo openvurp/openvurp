@@ -71,8 +71,8 @@ def test_telegram_shows_a_sign_of_life_while_the_agent_works():
     ch._handle({"message": {"text": "ciao", "from": {"id": "7", "first_name": "Enzo"},
                             "chat": {"id": "7"}}})
     methods = [m for m, _ in calls]
-    assert methods[0] == "sendChatAction" and "sendMessage" in methods
-    assert calls[0][1]["action"] == "typing"
+    assert "sendChatAction" in methods and "sendMessage" in methods
+    assert [p for m, p in calls if m == "sendChatAction"][0]["action"] == "typing"
 
 
 def test_telegram_reports_a_broken_turn_instead_of_dying_quietly():
@@ -114,3 +114,68 @@ def test_the_swarm_budget_message_points_to_the_page_not_the_env_file():
     import core.swarm as swarm
 
     assert ".env" not in inspect.getsource(swarm.Swarm._charge)
+
+
+# ── what the agent is doing, told to the phone while it happens ──────────
+
+def test_the_phone_is_told_what_the_agent_is_doing(tmp_path, monkeypatch):
+    """On the page you watch the commands run; on the phone it was dead air."""
+    from core import activity
+    from core.chat_store import ChatStore
+    from core.conversation import ChannelConversation, Incoming
+
+    monkeypatch.setattr("core.chat_store.DEFAULT_AGENTS", (), raising=False)
+    store = ChatStore(str(tmp_path))
+    amanda = store.create_agent("amanda", "offerte", "", "", "")
+    chat = store.direct_chat_for_agent(amanda["id"])
+
+    def chat_fn(text, chat_id="", attachments=None):
+        activity.publish("step", chat_id=chat_id, step="shell", text="ls -la")
+        activity.publish("peer", chat_id=chat_id, from_name="amanda",
+                         to_name="meteo", question="domani piove?")
+        activity.publish("step", chat_id="somebody-else", step="shell", text="rm x")
+        activity.publish("token", chat_id=chat_id, text="Ecco")
+        return {"chat_id": chat_id, "reply": "fatto", "author_name": "amanda"}
+
+    seen = []
+    conv = ChannelConversation(chat_fn, store)
+    replies = conv.handle(Incoming(text="@amanda cerca un ssd", channel="telegram",
+                                   peer_id="7"), on_progress=seen.append)
+
+    assert [r.text for r in replies] == ["fatto"]
+    assert seen[0] == "✓ amanda has it", seen
+    last = seen[-1].splitlines()
+    assert "$ ls -la" in last
+    assert "→ amanda asks meteo: domani piove?" in last
+    assert "✍ writing the answer…" in last
+    assert not any("rm x" in line for line in last), "another chat's command leaked in"
+
+
+def test_telegram_keeps_one_status_message_and_removes_it_at_the_end():
+    calls = []
+
+    class _Live(_Conv):
+        def handle(self, incoming, on_progress=None):
+            on_progress("✓ amanda has it")
+            on_progress("✓ amanda has it\n$ ls")
+            return [Reply("ok", author="amanda")]
+
+    from channels.telegram import TelegramChannel
+
+    ch = TelegramChannel("t", conversation=_Live())
+
+    def fake(method, **params):
+        calls.append((method, params))
+        return {"result": {"message_id": 5}} if method == "sendMessage" else {}
+
+    ch._call = fake
+    ch._handle({"message": {"text": "cerca un ssd", "from": {"id": "7"},
+                            "chat": {"id": "7"}}})
+    flow = [(m, p.get("text", p.get("message_id"))) for m, p in calls
+            if m != "sendChatAction"]
+    assert flow == [
+        ("sendMessage", "✓ amanda has it"),
+        ("editMessageText", "✓ amanda has it\n$ ls"),
+        ("deleteMessage", 5),
+        ("sendMessage", "*amanda*\nok"),
+    ], flow
