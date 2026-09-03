@@ -113,6 +113,10 @@ class WhatsAppChannel:
                 self._event(event)
             except Exception as exc:
                 self._warn(str(exc))
+        if not self._stop.is_set():
+            # The bridge died on its own: without this line nothing said so,
+            # and every message from the phone from here on was lost quietly.
+            self._warn("bridge exited: WhatsApp is off until openvurp restarts")
 
     # ── the bridge protocol ──────────────────────────────────────────────
 

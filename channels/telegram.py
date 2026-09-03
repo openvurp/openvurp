@@ -200,7 +200,7 @@ class TelegramChannel(Channel):
             # The keyboard goes on the LAST part: attached to the first, the
             # following ones would replace it anyway.
             if keyboard is not None and index == len(parts) - 1:
-                extra["reply_markup"] = tastiera
+                extra["reply_markup"] = keyboard
             try:
                 self._call("sendMessage", chat_id=recipient, text=part, **extra)
             except Exception as exc:
@@ -217,14 +217,22 @@ class TelegramChannel(Channel):
         """
         if self.conversation is None:
             return None
+        # It was `nomi()`, a method that does not exist: the error was
+        # swallowed and the buttons the roster text promises ("tap a name
+        # below") never appeared, for anyone, ever.
+        ask = getattr(self.conversation, "names", None)
+        if ask is None:
+            return None
         try:
-            nomi = self.conversation.nomi()
-        except Exception:
+            names = ask()
+        except Exception as exc:
+            if self.on_error:
+                self.on_error(f"Telegram: keyboard not built ({exc})")
             return None
-        if not nomi:
+        if not names:
             return None
-        rows = [[{"text": f"@{n}"} for n in nomi[i:i + 2]]
-                 for i in range(0, len(nomi), 2)]
+        rows = [[{"text": f"@{n}"} for n in names[i:i + 2]]
+                 for i in range(0, len(names), 2)]
         rows.append([{"text": "/agenti"}, {"text": "/tutti "}, {"text": "/io"}])
         return {"keyboard": rows, "resize_keyboard": True, "is_persistent": True}
 
@@ -295,11 +303,32 @@ class TelegramChannel(Channel):
         if self.conversation is None:
             self._dispatch(msg)
             return
-        replies = self.conversation.handle(Incoming(
-            text=text, channel="telegram", peer_id=user_id or chat_id,
-            sender=sender.get("first_name") or sender.get("username") or "",
-            attachments=files,
-        ))
+        # A sign of life while the agent works. A turn with a few commands
+        # takes minutes, and on the phone that was dead air: nothing said
+        # "still working", and nothing said "it broke" either.
+        done = threading.Event()
+
+        def typing():
+            while True:
+                try:
+                    self._call("sendChatAction", chat_id=chat_id, action="typing")
+                except Exception:
+                    return
+                if done.wait(4):
+                    return
+
+        threading.Thread(target=typing, daemon=True).start()
+        try:
+            replies = self.conversation.handle(Incoming(
+                text=text, channel="telegram", peer_id=user_id or chat_id,
+                sender=sender.get("first_name") or sender.get("username") or "",
+                attachments=files,
+            ))
+        except Exception as exc:
+            from core.conversation import Reply
+            replies = [Reply(f"[error: {exc}]", chat_id=chat_id)]
+        finally:
+            done.set()
         # The keyboard refreshes every round: create an agent from the web and
         # the next message already has it among the buttons.
         keyboard = self.keyboard()

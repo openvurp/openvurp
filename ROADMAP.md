@@ -14,6 +14,10 @@ decision is what most of the sections below now hang from.
 - done: one conversation per agent, on disk, surviving restarts
 - done: every agent carries the roster in its own tools, and asks the right colleague itself
 - done: `ask_everyone` — a question to the whole roster, silence from those it doesn't concern
+- done: a consulted colleague works **in the conversation you are looking at** — his
+  commands, his text as it arrives, the seconds passing — and what he did is saved
+  with his answer. Before, it all went into his own conversation, and the asker's
+  page sat still for minutes looking stuck
 - done: an agent can be renamed or removed from the page; its conversation is archived, not destroyed
 - per-agent tool allow-lists (today the toolset is the same for everyone)
 - duplicate an agent as a starting point for a new one
@@ -25,7 +29,14 @@ decision is what most of the sections below now hang from.
 - done: whoever opened it writes the close: what was agreed, what wasn't, who dissents
 - done: inventing a consensus is forbidden; "we didn't decide" is a valid ending
 - done: repeating yourself counts as silence, not as a turn
-- done: bounded by `MULTIPLAYER_MAX_AGENTS`, `MULTIPLAYER_MAX_ROUNDS`, `MULTIPLAYER_DAILY_CALL_BUDGET`
+- done: bounded by `MULTIPLAYER_MAX_AGENTS`, `MULTIPLAYER_MAX_ROUNDS`, `MULTIPLAYER_DAILY_CALL_BUDGET`,
+  all three editable from Settings
+- done: **the room says who is missing.** Whoever you call by name is in and
+  speaks first; if the cap leaves someone out, or someone cannot answer, a line
+  from openvurp says so in the room, at that moment, and the others are told not
+  to wait. Nobody may write a line in a colleague's name: the runtime strips it
+- done: a room that crashes closes its run and tells the page, instead of
+  showing "in discussion" until the five-minute sweeper
 - let the owner interject mid-discussion without stopping it
 
 ## 3. Safety
@@ -70,6 +81,8 @@ decision is what most of the sections below now hang from.
 - done: LLM retry with backoff, so a hiccup doesn't drop the turn
 - done: restart in place from `/update`, terminal stays open
 - done: heartbeat reduced to mechanical work — fading and the mirror, nothing autobiographical
+- reminders (`tools/scheduler.py`) that fail to send are dropped without a trace;
+  they should stay, with the error, and be shown
 - Windows helper for reboot persistence
 
 ## 7. Tools and skills
@@ -95,6 +108,12 @@ decision is what most of the sections below now hang from.
 - done: per-channel allow-lists; an empty one refuses to start
 - done: shared grammar (`@name`, `/agents`, `/all`, `/stop`, `/help`)
 - done: a message from the phone lands in the agent's own conversation
+- done: the room's notices and errors reach the phone too (a spent budget used to
+  answer with nothing); Telegram shows "typing" while an agent works and reports
+  a broken turn; the tap-a-name keyboard exists (it called a method that did not);
+  Discord splits long replies instead of cutting them; a dead WhatsApp bridge says so
+- **approvals do not reach the channels**: a tool that needs permission, asked
+  from the phone, waits on the page and is denied after 180 s with no message
 - one conversation per agent **and per person**: today two allowed users writing to the same agent share its thread
 - approval controls from the channels, not just from the page
 

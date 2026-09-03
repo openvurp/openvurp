@@ -6,6 +6,7 @@ room, with its own LLM client, role, and messages attributed in the ChatStore.
 
 from __future__ import annotations
 
+import re
 import threading
 
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ class TeamResult:
     input_tokens: int = 0
     output_tokens: int = 0
     errors: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)   # what the room was told
     rounds: int = 0
     ended: str = ""      # "silence" | "stop" | "cap" | "budget" | "empty"
 
@@ -85,28 +87,71 @@ def already_said(said, profile, text: str) -> bool:
                 difflib.SequenceMatcher(None, fresh, before).ratio() > 0.85:
             return True
     return False
-    for who, vecchio in said:
-        if who["id"] != profile["id"]:
-            continue
-        prima = _bare(vecchio)
-        if nuovo == prima:
-            return True
-        # «Ricevuto Enzo, per me e' chiusa» contiene «per me e' chiusa»:
-        # un'aggiunta di cortesia attorno alla stessa frase resta la stessa frase.
-        if len(nuovo) >= 12 and (nuovo in prima or prima in nuovo):
-            return True
-        # La somiglianza vale solo sul CORTO: le formule di chiusura si
-        # riconoscono cosi'. Su un intervento lungo basterebbe cambiare una
-        # cifra per sembrare nuovo — ma un intervento lungo quasi identico a
-        # occhio non capita: o e' identico (preso sopra) o e' davvero nuovo.
-        if len(nuovo) < 60 and                 difflib.SequenceMatcher(None, nuovo, prima).ratio() > 0.85:
-            return True
-    return False
 
 
 def has_words(text) -> bool:
     """A turn made only of emoji or punctuation is not a contribution."""
     return any(ch.isalpha() for ch in str(text or ""))
+
+
+def _norm_name(name) -> str:
+    return " ".join(str(name or "").lower().split())
+
+
+def named_in(text: str, participants: list[dict]) -> list[dict]:
+    """Who the request calls by name: "dev, from now on…", "@amanda …".
+
+    A word is a name only whole: "devo" does not call dev.
+    """
+    words = " " + " ".join(re.findall(r"[\w@]+", str(text or "").lower())) + " "
+    out = []
+    for who in participants:
+        name = _norm_name(who.get("name"))
+        if name and (f" {name} " in words or f" @{name} " in words):
+            out.append(who)
+    return out
+
+
+def choose_participants(members: list[dict], request: str,
+                        cap: int) -> tuple[list[dict], list[dict]]:
+    """Who takes part, in what order, and who stays out because of the cap.
+
+    Whoever the request calls by name is in, and speaks first. Before, the
+    room took the first N of the roster and dropped the rest without a word:
+    "dev, from now on…" went to a room where dev was fourth and the cap was
+    three. Three colleagues spent two rounds urging someone who was never
+    there, and one of them finally answered in his name.
+    """
+    named = {who["id"] for who in named_in(request, members)}
+    ordered = ([who for who in members if who["id"] in named] +
+               [who for who in members if who["id"] not in named])
+    cap = max(1, int(cap))
+    return ordered[:cap], ordered[cap:]
+
+
+def spoken_for_others(profile: dict, participants: list[dict], text: str) -> str:
+    """Drop the lines where this agent puts words in a colleague's mouth.
+
+    "dev: you're right, I'll answer now" — written by ciccio, while dev was
+    not in the room. The prompt forbids it; when the model does it anyway
+    the only serious barrier is code. Addressing someone ("dev, this one is
+    yours", "@dev: …") is not speaking for them and stays.
+    """
+    others = [_norm_name(who.get("name")) for who in participants
+              if who["id"] != profile["id"]]
+    others = [name for name in others if name]
+    if not others:
+        return str(text or "").strip()
+    kept = []
+    for line in str(text or "").splitlines():
+        low = line.lower()
+        if any(re.match(
+                r"^[^\w@\n]*" + re.escape(name) +
+                r"(?:\s*\u00b7[^\]\n:]{0,60})?[^\w@\n]*[:\]]", low)
+               for name in others):
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip()
 
 
 class MultiplayerCoordinator:
@@ -131,13 +176,14 @@ class MultiplayerCoordinator:
         """
         import config as cfg
 
-        participants = self.store.chat_agents(chat_id)
-        max_agents = max(1, min(int(getattr(cfg, "MULTIPLAYER_MAX_AGENTS", 3)), 6))
-        participants = participants[:max_agents]
-        if not participants:
+        members = self.store.chat_agents(chat_id)
+        if not members:
             return TeamResult(ended="empty", errors=[
                 "There is nobody in this room. Add agents from the roster."
             ])
+        max_agents = max(1, min(int(getattr(cfg, "MULTIPLAYER_MAX_AGENTS", 6)), 12))
+        participants, left_out = choose_participants(members, request, max_agents)
+        addressed = {who["id"] for who in named_in(request, participants)}
         daily_limit = max(0, int(getattr(cfg, "MULTIPLAYER_DAILY_CALL_BUDGET", 120)))
         used_today = self.store.count_agent_messages_since(
             datetime.now(timezone.utc).date().isoformat()
@@ -155,10 +201,27 @@ class MultiplayerCoordinator:
         max_rounds = max(1, min(int(getattr(cfg, "MULTIPLAYER_MAX_ROUNDS", 12)), 40))
         output = TeamResult()
         said: list[tuple[dict, str]] = []
+        # What the room is told by openvurp itself: who is out because of the
+        # cap, who could not answer. Nobody waits for someone who is not
+        # there, and nobody has to be told twice.
+        aside: list[str] = []
+        if left_out:
+            names = ", ".join(who["name"] for who in left_out)
+            aside.append(f"Non sono in questa discussione: {names}.")
+            self._note(
+                chat_id, run_id, output, on_message,
+                f"Fuori da questa discussione per il limite di {max_agents} "
+                f"agenti: {names}. Si alza nelle Impostazioni, "
+                f"\u00abAgents \u2192 Agents in a discussion\u00bb.",
+            )
         # How many contributions from OTHERS were on the table the last time
         # each of them spoke. This stops anyone from speaking twice when
         # nothing new has arrived for them to answer.
         seen_by: dict[str, int] = {}
+        # Whoever could not answer once is not called again in this
+        # discussion: the others were told, and a second "did not answer"
+        # under the first is noise, not news.
+        failed: set[str] = set()
 
         # A discussion is sequential by nature: whoever speaks later must be
         # able to read whoever spoke before. In parallel everyone writes blind
@@ -181,6 +244,8 @@ class MultiplayerCoordinator:
                 # new in front of it is not a turn: it is skipped.
                 if round_no > 1 and others <= seen_by.get(profile["id"], -1):
                     continue
+                if profile["id"] in failed:
+                    continue
                 seen_by[profile["id"]] = others
                 if on_turn is not None:
                     try:
@@ -190,16 +255,36 @@ class MultiplayerCoordinator:
                 floor = "\n\n".join(
                     f"[{who['name']} · {who['role']}] {text}" for who, text in said
                 )[-6000:]
+                if aside:
+                    floor += ("\n\n[openvurp] " + " ".join(aside) +
+                              " Non aspettateli e non sollecitateli.")
                 try:
                     text, tok_in, tok_out = self._speak(
                         profile, request, history, floor, round_no,
+                        addressed=profile["id"] in addressed,
                     )
                 except Exception as exc:
                     output.errors.append(f"{profile['name']}: {exc}")
+                    failed.add(profile["id"])
+                    # Said where it happens, not in a line at the end: the
+                    # others must stop waiting for him NOW, and you must see
+                    # that he was called and could not answer.
+                    aside.append(f"{profile['name']} non ha risposto ({exc}).")
+                    self._note(chat_id, run_id, output, on_message,
+                               f"{profile['name']} non ha risposto: {exc}")
                     continue
                 output.input_tokens += tok_in
                 output.output_tokens += tok_out
+                text = spoken_for_others(profile, participants, text)
                 if not text.strip() or text.strip() in {NOTHING, "-", "--"}:
+                    if round_no == 1 and profile["id"] in addressed:
+                        # You called him by name and he passed: that is an
+                        # answer, and it has to be visible as one.
+                        aside.append(f"{profile['name']} ha letto e non ha "
+                                     f"aggiunto niente.")
+                        self._note(chat_id, run_id, output, on_message,
+                                   f"{profile['name']} ha letto e non ha "
+                                   f"aggiunto niente.")
                     continue   # they chose to add nothing
                 if round_no > 1 and not has_words(text):
                     continue   # \u201c\U0001f319\u201d is filler, not a contribution
@@ -258,6 +343,28 @@ class MultiplayerCoordinator:
         output.brief = self._brief(said)
         return output
 
+    def _note(self, chat_id: str, run_id: str, output: TeamResult,
+              on_message, text: str) -> None:
+        """A line from openvurp in the room — not a voice, a notice.
+
+        It is stored like a message so it is still there after a reload, and
+        pushed live so it appears when it happens.
+        """
+        output.notes.append(text)
+        try:
+            row = self.store.add_message(
+                chat_id, "assistant", text, author_type="system",
+                author_id="openvurp", author_name="openvurp",
+                recipient_id="room", run_id=run_id, metadata={"note": True},
+            )
+        except Exception:
+            return
+        if on_message is not None:
+            try:
+                on_message(row)
+            except Exception:
+                pass
+
     def _client(self, profile: dict, request: str = ""):
         import config as cfg
 
@@ -291,7 +398,8 @@ class MultiplayerCoordinator:
         )
 
     def _speak(self, profile: dict, request: str, history: str,
-               floor: str, round_no: int) -> tuple[str, int, int]:
+               floor: str, round_no: int,
+               addressed: bool = False) -> tuple[str, int, int]:
         """Un intervento nella stanza, con davanti quello che hanno gia' detto."""
         rules = (
             f"Sei {profile['name']}, ruolo persistente: {profile['role']}.\n"
@@ -309,10 +417,24 @@ class MultiplayerCoordinator:
             # «conclusione». In una chat vera non li fa nessuno.
             "Non dire che sei d'accordo tanto per dirlo, non riassumere quello che "
             "hanno appena scritto gli altri e non chiudere con 'Conclusione:'. "
+            # Ciccio scrisse «dev: hai ragione, rispondo ora» — dev non era
+            # nella stanza. E tre agenti passarono due giri a sollecitare
+            # qualcuno che non c'era: chi manca e' gia' scritto nella
+            # discussione, insistere non lo fa arrivare.
+            "Non scrivere MAI a nome di un altro agente: niente righe che "
+            "iniziano con il nome di un collega e due punti, e non rispondere "
+            "al posto di chi non ha risposto. Se qualcuno manca o non ha "
+            "risposto, lo trovi segnalato da [openvurp] nella discussione: "
+            "non sollecitarlo, non e' compito tuo, e non aspettarlo.\n"
             f"Se non hai niente da aggiungere, rispondi solo {NOTHING} e taci: "
             "e' una risposta legittima."
             + self._roster(profile["id"])
         )
+        if addressed:
+            rules += (
+                "\nLa richiesta ti chiama per nome: e' rivolta a te. Rispondi "
+                "tu, nel merito, per primo. Passare la palla non e' una risposta."
+            )
         # Nessun classificatore decide qui che tipo di messaggio sia. Sapere se
         # «io vado a dormire ragazzi» e' un congedo e' esattamente cio' che un
         # modello sa fare meglio di una lista di parole — che infatti lo mancava.

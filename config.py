@@ -233,7 +233,7 @@ SUBAGENT_DEFAULT_MODE = _env("SUBAGENT_DEFAULT_MODE", "auto")
 # --- Stanze multiplayer (agenti persistenti, separate dai subagent) ---
 MULTIPLAYER_BACKEND = _env("MULTIPLAYER_BACKEND", "auto")
 MULTIPLAYER_MODEL = _env("MULTIPLAYER_MODEL", "")
-MULTIPLAYER_MAX_AGENTS = _env_int("MULTIPLAYER_MAX_AGENTS", 3)
+MULTIPLAYER_MAX_AGENTS = _env_int("MULTIPLAYER_MAX_AGENTS", 6)
 # A discussion has no duration decided in advance: it runs while somebody has
 # something to add, closes by itself when a round passes in silence, and you
 # stop it from the page. This is only the safety cap, so that a room left alone

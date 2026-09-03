@@ -91,13 +91,17 @@ amanda something from your phone and it is in her conversation on the screen.
 **A conversation each**, kept on disk, still there after a restart.
 
 **"All together"** — a room where they answer *each other*, not you in parallel.
-It ends when a round goes by with nobody adding anything, or when you press
-Stop. Then whoever opened it writes what was agreed, what wasn't, and who
-thinks otherwise. Making up a consensus is not allowed.
+Whoever you call by name is in and speaks first. It ends when a round goes by
+with nobody adding anything, or when you press Stop. Then whoever opened it
+writes what was agreed, what wasn't, and who thinks otherwise. Making up a
+consensus is not allowed, and neither is speaking in a colleague's name. If
+someone is left out by the cap, or cannot answer, the room says so.
 
 **What they are doing, while they do it** — the commands, the searches, and two
-avatars walking over to each other when one consults the other. A file an agent
-makes opens in a card next to the chat.
+avatars walking over to each other when one consults the other. While the
+colleague works you see his commands and his answer as it arrives, in the
+conversation you are looking at. A file an agent makes opens in a card next to
+the chat.
 
 **Settings**, on their own page (the gear, bottom left) — engine, channels,
 local servers. Everything is a menu built from what is actually installed, not

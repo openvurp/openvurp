@@ -2910,6 +2910,8 @@ class Agent:
                 "session_key": getattr(route, "session_key", ""),
                 "chat_id": getattr(route, "chat_id", ""),
                 "actor_id": getattr(self, "_active_actor_id", ""),
+                # L'agente della rubrica che sta agendo, se e' uno di loro.
+                "agent_id": getattr(route, "agent_id", ""),
             }
             meta.update(data)
             activity.publish(kind, **meta)

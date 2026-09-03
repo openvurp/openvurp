@@ -206,14 +206,28 @@ class ChannelConversation:
     def replies_from(out: dict, chat_id: str) -> list[Reply]:
         """A room answers with several voices: all of them go, not just the last."""
         chat_id = str(out.get("chat_id") or chat_id)
+        # What the room said about itself — who stayed out, who could not
+        # answer, the daily budget — used to reach the page and never the
+        # phone: after the budget was spent, /all answered with nothing.
+        aside = [
+            Reply(f"[{str(t).strip()}]", chat_id=chat_id)
+            for t in list(out.get("team_notes") or []) + list(out.get("team_errors") or [])
+            if str(t).strip()
+        ]
         room = out.get("team_messages") or []
         if room:
-            return [
+            return aside + [
                 Reply(str(m.get("content", "")).strip(),
                       author=str(m.get("author_name", "")), chat_id=chat_id)
                 for m in room if str(m.get("content", "")).strip()
             ]
+        if aside:
+            return aside
         text = str(out.get("reply", "") or "").strip()
         if not text or text == "(no reply)":
+            # An agent's silence is not sent. A room's is: you asked everyone,
+            # and on the phone nothing back looks like a bot that died.
+            if "team_messages" in out:
+                return [Reply("[nobody had anything to say]", chat_id=chat_id)]
             return []
         return [Reply(text, author=str(out.get("author_name", "")), chat_id=chat_id)]

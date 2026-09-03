@@ -9,6 +9,7 @@ from __future__ import annotations
 import threading
 
 from channels import Channel, ChannelMessage
+from channels.telegram import split
 from core.conversation import ChannelConversation, Incoming
 
 MESSAGE_LIMIT = 1900        # Discord cuts at 2000
@@ -73,7 +74,10 @@ class DiscordChannel(Channel):
             replies = await asyncio.to_thread(self._replies, text, author,
                                               getattr(message.author, "display_name", ""))
             for part in replies:
-                await message.channel.send(part[:MESSAGE_LIMIT])
+                # Cut at 1900 characters mid-sentence, with no sign that
+                # anything was missing. Telegram already splits: same here.
+                for piece in split(part, MESSAGE_LIMIT):
+                    await message.channel.send(piece)
 
         try:
             client.run(self.token, log_handler=None)

@@ -49,6 +49,10 @@ class _Route:
     """Route minima: serve solo a dire al bus in quale chat sta succedendo."""
 
     chat_id: str
+    # Chi sta agendo. La pagina lo legge per mettere ogni azione nel riquadro
+    # giusto: la risposta di chi parla, o la consulenza del collega che sta
+    # lavorando per lui.
+    agent_id: str = ""
 
     @property
     def session_key(self) -> str:
@@ -228,7 +232,7 @@ class Swarm:
         if used + calls > limit:
             raise SwarmError(
                 f"Budget giornaliero dello sciame esaurito ({used}/{limit}). "
-                f"Alza SWARM_DAILY_CALL_BUDGET nel .env."
+                f"Si alza nelle Impostazioni, «Agents → Calls per day»."
             )
 
     # ── Conversazione ────────────────────────────────────────────────────
@@ -389,6 +393,10 @@ class Swarm:
                 pass
 
         segnala("peer", question=question[:400])
+        # Quello che il collega fa per rispondere — comandi, ricerche — va
+        # tenuto: e' la parte della consulenza che dice se stava lavorando o
+        # era bloccato, e senza salvarla resta solo la risposta finale.
+        passi: list[dict] = []
         if broadcast:
             # A question put to everyone: the useful half is that whoever it
             # does not concern stays quiet. Without that permission a chorus of
@@ -402,9 +410,13 @@ class Swarm:
             )
         else:
             request = f"{asker.name} asks you: {question}"
+        # `chat_id` e' la chat di chi ha chiesto: e' li' che l'utente sta
+        # guardando. Prima il consultato lavorava senza chat, le sue azioni
+        # finivano nella SUA conversazione e qui restava un riquadro fermo
+        # per minuti: sembrava bloccato mentre stava rispondendo.
         text = self._speak(
-            peer, request,
-            sender=asker.name, allow_peers=False, steps=[], persist=False,
+            peer, request, chat_id=chat_id,
+            sender=asker.name, allow_peers=False, steps=passi, persist=False,
         )
         segnala("peer_done", answer=text[:600])
         if broadcast and self._said_nothing(text):
@@ -417,10 +429,13 @@ class Swarm:
                 author_id=asker.id, author_name=asker.name,
                 recipient_id=peer.id, metadata=dict(meta, direction="ask"),
             )
+            answer_meta = dict(meta, direction="answer")
+            if passi:
+                answer_meta["steps"] = passi
             self.store.add_message(
                 chat_id, "assistant", text, author_type="agent",
                 author_id=peer.id, author_name=peer.name,
-                recipient_id=asker.id, metadata=dict(meta, direction="answer"),
+                recipient_id=asker.id, metadata=answer_meta,
             )
         return text
 
@@ -446,7 +461,8 @@ class Swarm:
         from core import activity
 
         meta = {"source": "dashboard", "chat_id": chat_id,
-                "session_key": f"dashboard:chat:{chat_id}", "actor_id": author}
+                "session_key": f"dashboard:chat:{chat_id}", "actor_id": author,
+                "agent_id": author}
 
         def on_text(delta: str):
             if delta:
@@ -523,15 +539,19 @@ class Swarm:
             previous_route = getattr(parent, "_active_route", None)
             previous_channel = getattr(parent, "_active_channel", "cli")
             previous_ui = getattr(parent, "ui", None)
-            if chat.get("id"):
-                parent._active_route = _Route(chat["id"])
+            # Dove si sta guardando: la chat del turno. In una consulenza e'
+            # quella di chi ha chiesto, non quella del consultato — e' li'
+            # che l'utente aspetta, ed e' li' che deve vedere i comandi.
+            where = chat_id or str(chat.get("id") or "")
+            if where:
+                parent._active_route = _Route(where, member.id)
                 parent._active_channel = "dashboard"
                 # Il permesso va chiesto dove l'azione e' stata chiesta: se
                 # l'agente e' stato aperto dal browser, la domanda non puo'
                 # comparire nel terminale.
                 try:
                     from core.approvals import WebApprovalUI
-                    parent.ui = WebApprovalUI(previous_ui, chat["id"], member.name)
+                    parent.ui = WebApprovalUI(previous_ui, where, member.name)
                 except Exception:
                     pass
             # Chi impara e' questo agente, non la piattaforma: le lezioni e
