@@ -45,16 +45,23 @@ ATTACHMENTS = (
 )
 
 
-def _accepts_progress(handle) -> bool:
-    """Whether this conversation can report what the agent is doing."""
+def _accepts(handle, name: str) -> bool:
+    """Whether this conversation takes the ``name`` callback."""
     import inspect
 
     try:
         params = inspect.signature(handle).parameters
     except (TypeError, ValueError):
         return False
-    return "on_progress" in params or any(
+    return name in params or any(
         p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
+def _accepts_progress(handle) -> bool:
+    return _accepts(handle, "on_progress")
+
+
+APPROVAL_BUTTONS = {"yes": "Consenti", "always": "Sempre", "no": "No"}
 
 
 def split(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
@@ -282,13 +289,86 @@ class TelegramChannel(Channel):
                 continue
             for update in dati.get("result", []):
                 self._offset = max(self._offset, int(update.get("update_id", 0)) + 1)
+                # Each update on its own thread. Handled in line, a turn of a
+                # few minutes stopped the polling: a follow-up waited behind
+                # it, and a button pressed to grant a permission could never
+                # arrive before the permission timed out.
+                threading.Thread(target=self._guarded, args=(update,),
+                                 daemon=True).start()
+
+    def _guarded(self, update: dict) -> None:
+        try:
+            self._handle(update)
+        except Exception as exc:
+            if self.on_error:
+                self.on_error(f"Telegram: {exc}")
+
+    # ── permissions, answered from the phone ─────────────────────────────
+
+    def _ask_permission(self, chat_id: str, asked: dict, evt: dict) -> None:
+        """The question with three buttons; the resolution edits it."""
+        token = str(evt.get("approval_id", ""))
+        if evt.get("kind") == "approval_done":
+            mid = asked.pop(token, None)
+            if mid:
+                said = {"yes": "consentito", "always": "consentito, sempre",
+                        "timeout": "nessuna risposta in tempo: negato"}
                 try:
-                    self._handle(update)
-                except Exception as exc:
-                    if self.on_error:
-                        self.on_error(f"Telegram: {exc}")
+                    self._call("editMessageText", chat_id=chat_id, message_id=mid,
+                               text="✓ " + said.get(evt.get("choice"), "negato"))
+                except Exception:
+                    pass
+            return
+        who = evt.get("actor") or "un agente"
+        text = f"⏸ {who} chiede il permesso:\n{str(evt.get('text', ''))[:900]}"
+        keyboard = {"inline_keyboard": [[
+            {"text": label, "callback_data": f"appr:{token}:{choice}"}
+            for choice, label in APPROVAL_BUTTONS.items()]]}
+        try:
+            sent = self._call("sendMessage", chat_id=chat_id, text=text,
+                              reply_markup=keyboard) or {}
+            mid = (sent.get("result") or {}).get("message_id")
+            if mid:
+                asked[token] = mid
+        except Exception as exc:
+            if self.on_error:
+                self.on_error(f"Telegram: permesso non inviato ({exc})")
+
+    def _button_pressed(self, query: dict) -> None:
+        """A button pressed under a permission question."""
+        user_id = str((query.get("from") or {}).get("id", ""))
+        if self.allowed and user_id not in self.allowed:
+            return
+        data = str(query.get("data", ""))
+        try:
+            self._call("answerCallbackQuery", callback_query_id=query.get("id", ""))
+        except Exception:
+            pass
+        if not data.startswith("appr:"):
+            return
+        _, token, choice = (data.split(":", 2) + ["", ""])[:3]
+        waiting = False
+        if self.conversation is not None:
+            answer = getattr(self.conversation, "answer_approval", None)
+            if answer is not None:
+                waiting = bool(answer(token, choice))
+        message = query.get("message") or {}
+        mid = message.get("message_id")
+        chat_id = str((message.get("chat") or {}).get("id", ""))
+        if mid and chat_id:
+            said = {"yes": "consentito", "always": "consentito, sempre"}.get(choice, "negato")
+            if not waiting:
+                said = "gia' risolta altrove, o scaduta"
+            try:
+                self._call("editMessageText", chat_id=chat_id, message_id=mid,
+                           text="✓ " + said)
+            except Exception:
+                pass
 
     def _handle(self, update: dict) -> None:
+        if update.get("callback_query"):
+            self._button_pressed(update["callback_query"])
+            return
         message = update.get("message") or update.get("edited_message") or {}
         text = str(message.get("text") or message.get("caption") or "").strip()
         sender = message.get("from") or {}
@@ -354,11 +434,14 @@ class TelegramChannel(Channel):
             sender=sender.get("first_name") or sender.get("username") or "",
             attachments=files,
         )
+        asked: dict = {}
+        extras = {}
+        if _accepts(self.conversation.handle, "on_progress"):
+            extras["on_progress"] = progress
+        if _accepts(self.conversation.handle, "on_approval"):
+            extras["on_approval"] = lambda evt: self._ask_permission(chat_id, asked, evt)
         try:
-            if _accepts_progress(self.conversation.handle):
-                replies = self.conversation.handle(incoming, on_progress=progress)
-            else:
-                replies = self.conversation.handle(incoming)
+            replies = self.conversation.handle(incoming, **extras)
         except Exception as exc:
             from core.conversation import Reply
             replies = [Reply(f"[error: {exc}]", chat_id=chat_id)]

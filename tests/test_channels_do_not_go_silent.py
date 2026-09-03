@@ -179,3 +179,138 @@ def test_telegram_keeps_one_status_message_and_removes_it_at_the_end():
         ("deleteMessage", 5),
         ("sendMessage", "*amanda*\nok"),
     ], flow
+
+
+# ── permissions, answered from the phone ─────────────────────────────────
+
+def test_a_permission_question_reaches_the_phone_and_the_answer_comes_back(tmp_path, monkeypatch):
+    """A tool that stops to ask used to wait on the page while you were on
+    Telegram, and be denied after 180 s with no message either way."""
+    import threading
+
+    from core import approvals
+    from core.chat_store import ChatStore
+    from core.conversation import ChannelConversation, Incoming
+
+    monkeypatch.setattr("core.chat_store.DEFAULT_AGENTS", (), raising=False)
+    store = ChatStore(str(tmp_path))
+    amanda = store.create_agent("amanda", "offerte", "", "", "")
+
+    outcome = {}
+
+    def chat_fn(text, chat_id="", attachments=None):
+        # The tool asks, and waits for whoever answers first.
+        outcome["choice"] = approvals.request("rm -rf build/", chat_id, actor="amanda")
+        return {"chat_id": chat_id, "reply": "fatto"}
+
+    asked = []
+
+    def on_approval(evt):
+        asked.append(evt)
+        if evt["kind"] == "approval":
+            # The phone answers a moment later, from another thread — as a
+            # button press would.
+            threading.Timer(0.1, ChannelConversation.answer_approval,
+                            args=(evt["approval_id"], "yes")).start()
+
+    conv = ChannelConversation(chat_fn, store)
+    replies = conv.handle(Incoming(text="@amanda pulisci", channel="telegram", peer_id="7"),
+                          on_approval=on_approval)
+
+    assert [r.text for r in replies] == ["fatto"]
+    assert outcome["choice"] == "yes"
+    assert [e["kind"] for e in asked] == ["approval", "approval_done"]
+    assert asked[0]["text"] == "rm -rf build/" and asked[0]["actor"] == "amanda"
+    assert asked[1]["choice"] == "yes"
+
+
+def test_telegram_asks_with_buttons_and_a_press_answers():
+    calls = []
+
+    class _Asking(_Conv):
+        answered = []
+
+        def handle(self, incoming, on_progress=None, on_approval=None):
+            on_approval({"kind": "approval", "approval_id": "abc",
+                         "text": "rm -rf build/", "actor": "amanda"})
+            return [Reply("ok", author="amanda")]
+
+        def answer_approval(self, approval_id, choice):
+            type(self).answered.append((approval_id, choice))
+            return True
+
+    from channels.telegram import TelegramChannel
+
+    ch = TelegramChannel("t", conversation=_Asking())
+
+    def fake(method, **params):
+        calls.append((method, params))
+        return {"result": {"message_id": 9}} if method == "sendMessage" else {}
+
+    ch._call = fake
+    ch._handle({"message": {"text": "pulisci", "from": {"id": "7"}, "chat": {"id": "7"}}})
+    question = [p for m, p in calls if m == "sendMessage" and "reply_markup" in p][0]
+    assert "amanda chiede il permesso" in question["text"] and "rm -rf build/" in question["text"]
+    buttons = question["reply_markup"]["inline_keyboard"][0]
+    assert [b["callback_data"] for b in buttons] == ["appr:abc:yes", "appr:abc:always", "appr:abc:no"]
+
+    # The press arrives as its own update, while the turn may still be running.
+    ch._handle({"callback_query": {"id": "q1", "from": {"id": "7"},
+                                   "data": "appr:abc:always",
+                                   "message": {"message_id": 9, "chat": {"id": "7"}}}})
+    assert _Asking.answered == [("abc", "always")]
+    edited = [p for m, p in calls if m == "editMessageText" and p.get("message_id") == 9]
+    assert edited and "consentito, sempre" in edited[-1]["text"]
+
+
+def test_a_stranger_cannot_press_the_buttons():
+    class _Asking(_Conv):
+        answered = []
+
+        def answer_approval(self, approval_id, choice):
+            type(self).answered.append((approval_id, choice))
+            return True
+
+    from channels.telegram import TelegramChannel
+
+    ch = TelegramChannel("t", conversation=_Asking(), allowed=["7"])
+    ch._call = lambda method, **params: {}
+    ch._handle({"callback_query": {"id": "q1", "from": {"id": "666"},
+                                   "data": "appr:abc:yes",
+                                   "message": {"message_id": 9, "chat": {"id": "666"}}}})
+    assert _Asking.answered == []
+
+
+def test_telegram_polling_does_not_wait_for_a_slow_turn():
+    """Handled in line, a turn of minutes stopped the polling: the button
+    press that grants a permission could never arrive before it timed out."""
+    import threading
+    import time
+
+    from channels.telegram import TelegramChannel
+
+    ch = TelegramChannel("t", conversation=_Conv())
+    polls = {"n": 0}
+
+    def fake(method, **params):
+        if method == "getUpdates":
+            polls["n"] += 1
+            if polls["n"] == 1:
+                return {"result": [{"update_id": 1, "message": {"text": "a"}},
+                                   {"update_id": 2, "message": {"text": "b"}}]}
+            ch.stop()
+        return {}
+
+    ch._call = fake
+    seen = []
+
+    def slow(update):
+        seen.append(threading.current_thread().name)
+        time.sleep(0.3)
+
+    ch._handle = slow
+    t0 = time.time()
+    ch.start()
+    assert len(seen) == 2
+    assert time.time() - t0 < 0.5, "the two updates were handled one after the other"
+    assert "MainThread" not in seen

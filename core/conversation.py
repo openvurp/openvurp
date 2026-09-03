@@ -75,9 +75,13 @@ class Progress:
     KEEP = 12          # lines kept: the last ones are the ones that matter
     EVERY = 2.0        # seconds between two edits
 
-    def __init__(self, chat_id: str, on_progress, opening: str = ""):
+    def __init__(self, chat_id: str, on_progress, opening: str = "",
+                 on_approval=None):
         self.chat_id = str(chat_id)
         self.on_progress = on_progress
+        # ``on_approval(evt)`` gets the permission question itself (and its
+        # resolution): a channel with buttons can let you answer from there.
+        self.on_approval = on_approval
         self.lines: list[str] = [opening] if opening else []
         self._writing = False
         self._dirty = False
@@ -87,7 +91,7 @@ class Progress:
         self._queue = None
 
     def __enter__(self):
-        if self.on_progress is None:
+        if self.on_progress is None and self.on_approval is None:
             return self
         try:
             from core import activity
@@ -119,6 +123,11 @@ class Progress:
     def _take(self, evt: dict) -> None:
         if str(evt.get("chat_id", "")) != self.chat_id:
             return
+        if self.on_approval is not None and evt.get("kind") in ("approval", "approval_done"):
+            try:
+                self.on_approval(dict(evt))
+            except Exception:
+                pass
         line = self.line_for(evt)
         if line and (not self.lines or self.lines[-1] != line):
             self.lines.append(line)
@@ -149,8 +158,13 @@ class Progress:
             return f"\u24d8 {text[:120]}"
         if kind == "approval":
             # The one line that changes what you do next: the turn is waiting
-            # for you, and it is waiting on the page.
-            return f"\u23f8 waiting for your permission on the page: {text[:80]}"
+            # for you.
+            where = "" if self.on_approval else " on the page"
+            return f"\u23f8 waiting for your permission{where}: {text[:80]}"
+        if kind == "approval_done":
+            said = {"yes": "granted", "always": "granted, always",
+                    "timeout": "nobody answered in time: denied"}
+            return f"\u2713 permission {said.get(evt.get('choice'), 'denied')}"
         if kind == "token":
             if self._writing:
                 return ""
@@ -173,6 +187,8 @@ class Progress:
             self._flush()
 
     def _flush(self, force: bool = False):
+        if self.on_progress is None:
+            return
         if not force and (not self._dirty or time.time() - self._last < self.EVERY):
             return
         self._dirty = False
@@ -199,9 +215,13 @@ class ChannelConversation:
 
     # ── the grammar, the same on every channel ───────────────────────────
 
-    def handle(self, msg: Incoming, on_progress=None) -> list[Reply]:
+    def handle(self, msg: Incoming, on_progress=None,
+               on_approval=None) -> list[Reply]:
         """``on_progress(text)``, if given, receives what the agent is doing
-        while it does it: a status the channel can keep editing."""
+        while it does it: a status the channel can keep editing.
+        ``on_approval(evt)`` receives a permission question (and, later, how
+        it was resolved) so the channel can let you answer from there."""
+        self._on_approval = on_approval
         text = (msg.text or "").strip()
         if not text:
             return []
@@ -317,6 +337,12 @@ class ChannelConversation:
             return [Reply("I can't open the room.")]
         return self._run(room["id"], text, msg, on_progress)
 
+    @staticmethod
+    def answer_approval(approval_id: str, choice: str) -> bool:
+        """The user's answer from the phone. True if somebody was waiting."""
+        from core.approvals import answer
+        return answer(str(approval_id or ""), str(choice or ""))
+
     def _who(self, chat_id: str) -> str:
         """The name the status line opens with: the agent's, or the room's."""
         try:
@@ -333,7 +359,8 @@ class ChannelConversation:
     def _run(self, chat_id: str, text: str, msg: Incoming,
              on_progress=None) -> list[Reply]:
         opening = f"\u2713 {self._who(chat_id)} has it" if on_progress else ""
-        with Progress(chat_id, on_progress, opening):
+        with Progress(chat_id, on_progress, opening,
+                      on_approval=getattr(self, "_on_approval", None)):
             try:
                 out = self.chat_fn(text, chat_id=chat_id,
                                    attachments=list(msg.attachments or []))

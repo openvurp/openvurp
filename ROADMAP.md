@@ -114,8 +114,14 @@ decision is what most of the sections below now hang from.
   answer" — in one status message edited in place and removed when the answer
   lands, plus "typing" and a broken turn reported; the tap-a-name keyboard exists (it called a method that did not);
   Discord splits long replies instead of cutting them; a dead WhatsApp bridge says so
-- **approvals do not reach the channels**: a tool that needs permission, asked
-  from the phone, waits on the page and is denied after 180 s with no message
+- done: **a permission asked from Telegram is answered from Telegram** — the
+  question arrives with three buttons (allow, always, no); the page shows it
+  too, and whoever answers first wins. Before, the tool waited on the page and
+  was denied after 180 s with no message either way. Telegram now handles each
+  update on its own thread, so a button press is not stuck behind the turn it
+  is meant to unblock
+- the same buttons on Discord, Slack and WhatsApp (the core already hands them
+  the question; only the buttons are missing)
 - one conversation per agent **and per person**: today two allowed users writing to the same agent share its thread
 - approval controls from the channels, not just from the page
 

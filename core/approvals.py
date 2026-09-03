@@ -19,11 +19,12 @@ import uuid
 
 
 class _Pending:
-    __slots__ = ("event", "choice")
+    __slots__ = ("event", "choice", "chat_id")
 
-    def __init__(self):
+    def __init__(self, chat_id: str = ""):
         self.event = threading.Event()
         self.choice = "no"
+        self.chat_id = chat_id
 
 
 _LOCK = threading.RLock()
@@ -43,7 +44,7 @@ def request(prompt: str, chat_id: str, tool: str = "", actor: str = "") -> str:
     from core import activity
 
     token = uuid.uuid4().hex[:12]
-    pending = _Pending()
+    pending = _Pending(str(chat_id or ""))
     with _LOCK:
         _PENDING[token] = pending
 
@@ -89,7 +90,11 @@ def answer(token: str, choice: str) -> bool:
     pending.event.set()
     try:
         from core import activity
+        # With the chat: whoever is following that conversation from a phone
+        # must learn that the question was answered elsewhere.
         activity.publish("approval_done", source="dashboard",
+                         chat_id=pending.chat_id,
+                         session_key=f"dashboard:chat:{pending.chat_id}",
                          approval_id=token, choice=choice)
     except Exception:
         pass
