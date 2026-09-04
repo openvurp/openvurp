@@ -24,6 +24,9 @@ decision is what most of the sections below now hang from.
 
 ## 2. The room
 
+- done: what an agent writes, the page draws — tables, ordered and nested
+  lists, quotes, rules. A comparison comes back as a markdown table (it is the
+  format a model picks on its own) and used to be printed as a wall of pipes
 - done: they answer each other, not you in parallel — everyone reads what came before
 - done: it ends when a round passes with nobody adding anything, or on Stop
 - done: whoever opened it writes the close: what was agreed, what wasn't, who dissents
