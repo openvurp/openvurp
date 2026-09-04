@@ -877,14 +877,16 @@ def test_a_file_the_agent_names_opens_beside_the_chat():
     niente da nessuna parte — il percorso nel testo dell'agente era testo
     morto. Ora i percorsi nominati diventano schede sotto il messaggio, e il
     risultato finito (PDF, pagina, immagine) si apre DA SOLO nell'anteprima
-    quando il turno si chiude.
+    quando il turno si chiude — ma solo se esiste davvero: dopo una ricerca
+    sul web la coda di un link (".../enghouse-...-802425061.html") veniva
+    scambiata per un percorso, e si apriva da sola una scheda vuota.
     """
     js = _script(_page())
     assert "function trovaPercorsi(" in js
     assert "prodotti.length?allegatiHTML(prodotti)" in js
     fine = js[js.index('e.kind==="assistant_end"'):]
     fine = fine[:fine.index("}else")]   # tutto il ramo, non una fetta a occhio
-    assert "apriFile(belli[belli.length-1])" in fine, "il prodotto non si apre da solo"
+    assert "apriSeEsiste(belli[belli.length-1])" in fine, "il prodotto non si apre da solo"
     # E una pagina HTML si guarda impaginata, in sandbox senza permessi.
     assert '<iframe sandbox=""' in js
 

@@ -27,6 +27,11 @@ decision is what most of the sections below now hang from.
 - done: what an agent writes, the page draws — tables, ordered and nested
   lists, quotes, rules. A comparison comes back as a markdown table (it is the
   format a model picks on its own) and used to be printed as a wall of pipes
+- done: a link is not a file. The tail of a web address looks like a path, so
+  after a web search the page offered it as a file to open — and opened a blank
+  card on a file that had never existed. Web addresses are no longer mistaken
+  for paths, nothing is opened or offered before checking it is there, and a
+  missing file now says so instead of showing an empty frame
 - done: they answer each other, not you in parallel — everyone reads what came before
 - done: it ends when a round passes with nobody adding anything, or on Stop
 - done: whoever opened it writes the close: what was agreed, what wasn't, who dissents
